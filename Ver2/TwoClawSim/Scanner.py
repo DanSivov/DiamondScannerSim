@@ -3,9 +3,8 @@ import random
 import matplotlib.pyplot as plt
 from matplotlib.patches import RegularPolygon
 import math
-import config
 
-from Ver2.TwoClawSim.config import N_BOXES, T_SCAN
+from .config import N_BOXES, T_SCAN
 
 
 def make_diamond(x, y, color, size=0.18, z=6):
@@ -22,7 +21,7 @@ class DScanner:
         self.ready_time = None  # when it entered ready state
         self.timer = 0.0
         self.target_box_id = None  # Which box this diamond should go to
-        self.scan_time = getattr(config, 'T_SCAN', T_SCAN)
+        self.scan_time = T_SCAN
 
         # Visual diamond for this scanner
         self.diamond = make_diamond(POS_X, 7.5, '#ffd54f')

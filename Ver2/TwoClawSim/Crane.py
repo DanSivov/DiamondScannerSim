@@ -1,3 +1,4 @@
+#Crane.py
 import math
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, RegularPolygon
@@ -103,7 +104,8 @@ class BlueCrane(Crane):
         self.scanner_list = scanner_list
         self.loading_strategy = loading_strategy  # "closest" or "furthest"
         self.state = "PICK_AT_START"
-        self.action_timer = self.lower_time + self.raise_time  # PICK_TIME
+        self.pick_phase = "LOWER"
+        self.action_timer = self.lower_time
 
         # Blue crane specific diamond (starts at start position)
         self.start_diamond = make_diamond(start_x, kwargs.get('top_y', 7.5), '#33a3ff')
@@ -157,29 +159,46 @@ class BlueCrane(Crane):
         ARRIVE_EPS = 1e-6
 
         if self.state == "PICK_AT_START":
-            if self.action_timer == self.lower_time + self.raise_time:  # PICK_TIME
-                self.start_diamond.set_visible(True)
-                self.start_diamond.xy = (self.start_x, self.top_y)
-                self.set_hoist(self.x, self.top_y, True)
+            # Two-phase pick: LOWER then RAISE
+            if self.pick_phase == "LOWER":
+                if self.action_timer == self.lower_time:  # First frame
+                    self.start_diamond.set_visible(False)  # Hide during lowering
+                    self.set_hoist(self.x, self.carry_y, True)
 
-            self.action_timer -= dt
-            prog = max(0.0, min(1.0, 1.0 - self.action_timer / (self.lower_time + self.raise_time)))
-            y = self.top_y + (self.carry_y - self.top_y) * prog
-            self.start_diamond.xy = (self.start_x, y)
-            self.set_hoist(self.x, y, True)
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.lower_time))
+                y = self.carry_y + (self.top_y - self.carry_y) * prog
+                self.set_hoist(self.x, y, True)
 
-            if self.action_timer <= 0:
-                self.has_diamond = True
-                self.start_diamond.xy = (self.x, self.carry_y)
-                self.set_hoist(self.x, self.carry_y, False)
-                self.target_i = self.get_target_scanner()
-                if self.target_i is None:
-                    # stage near the earliest READY if exists; otherwise near earliest finishing scan
-                    j = self.earliest_ready_scanner()
-                    if j is None:
-                        j = self.earliest_finishing_scan()
-                    self.target_i = j if j is not None else 0
-                self.state = "MOVE_TO_SCANNER"
+                if self.action_timer <= 0:
+                    # Switch to RAISE phase
+                    self.pick_phase = "RAISE"
+                    self.action_timer = self.raise_time
+                    # NOW show the diamond at the pick position
+                    self.start_diamond.set_visible(True)
+                    self.start_diamond.xy = (self.start_x, self.top_y)
+
+            elif self.pick_phase == "RAISE":
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.raise_time))
+                y = self.top_y + (self.carry_y - self.top_y) * prog
+                self.start_diamond.xy = (self.start_x, y)
+                self.set_hoist(self.x, y, True)
+
+                if self.action_timer <= 0:
+                    # Pick complete
+                    self.has_diamond = True
+                    self.start_diamond.xy = (self.x, self.carry_y)
+                    self.set_hoist(self.x, self.carry_y, False)
+                    self.pick_phase = None
+                    self.target_i = self.get_target_scanner()
+                    if self.target_i is None:
+                        # stage near the earliest READY if exists; otherwise near earliest finishing scan
+                        j = self.earliest_ready_scanner()
+                        if j is None:
+                            j = self.earliest_finishing_scan()
+                        self.target_i = j if j is not None else 0
+                    self.state = "MOVE_TO_SCANNER"
 
         elif self.state == "MOVE_TO_SCANNER":
             target_i = self.target_i
@@ -204,7 +223,8 @@ class BlueCrane(Crane):
             # arrival checks
             if abs(self.x - sx) <= ARRIVE_EPS and self.scanner_list[target_i].state == "empty":
                 self.state = "DROP_AT_SCANNER"
-                self.action_timer = self.lower_time + self.raise_time  # DROP_TIME
+                self.drop_phase = "LOWER"
+                self.action_timer = self.lower_time
                 self.set_hoist(self.x, self.carry_y, True)
             elif abs(self.x - target_x) <= ARRIVE_EPS and not want_scanner:
                 self.state = "WAIT_AT_STAGING"
@@ -217,21 +237,36 @@ class BlueCrane(Crane):
                 self.state = "MOVE_TO_SCANNER"
 
         elif self.state == "DROP_AT_SCANNER":
-            self.action_timer -= dt
-            prog = max(0.0, min(1.0, 1.0 - self.action_timer / (self.lower_time + self.raise_time)))
-            y = self.carry_y + (self.top_y - self.carry_y) * prog
-            self.start_diamond.xy = (self.scanner_list[self.target_i].POS_X, y)
-            self.set_hoist(self.x, y, True)
+            # Two-phase drop: LOWER then RAISE
+            if self.drop_phase == "LOWER":
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.lower_time))
+                y = self.carry_y + (self.top_y - self.carry_y) * prog
+                self.start_diamond.xy = (self.scanner_list[self.target_i].POS_X, y)
+                self.set_hoist(self.x, y, True)
 
-            if self.action_timer <= 0:
-                # deposit and start scanning
-                self.start_diamond.set_visible(False)
-                self.scanner_list[self.target_i].scan(None)  # Start scanning
-                self.has_diamond = False
-                self.set_hoist(self.x, self.top_y, False)
-                self.state = "RETURN_TO_START"
-                if schedule_red_callback:
-                    schedule_red_callback()
+                if self.action_timer <= 0:
+                    # Switch to RAISE phase
+                    self.drop_phase = "RAISE"
+                    self.action_timer = self.raise_time
+                    # Deposit diamond
+                    self.start_diamond.set_visible(False)
+                    self.scanner_list[self.target_i].scan(None)  # Start scanning
+                    self.has_diamond = False
+
+            elif self.drop_phase == "RAISE":
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.raise_time))
+                y = self.top_y + (self.carry_y - self.top_y) * prog
+                self.set_hoist(self.x, y, True)
+
+                if self.action_timer <= 0:
+                    # Drop complete
+                    self.set_hoist(self.x, self.carry_y, False)
+                    self.drop_phase = None
+                    self.state = "RETURN_TO_START"
+                    if schedule_red_callback:
+                        schedule_red_callback()
 
         elif self.state == "RETURN_TO_START":
             step = self.v_traverse * dt
@@ -241,16 +276,18 @@ class BlueCrane(Crane):
 
             if self.x <= self.start_x + 1e-6:
                 self.state = "PICK_AT_START"
-                self.action_timer = self.lower_time + self.raise_time  # PICK_TIME
+                self.pick_phase = "LOWER"
+                self.action_timer = self.lower_time
 
         self.update_position()
 
     def reset(self):
         super().reset()
         self.state = "PICK_AT_START"
-        self.action_timer = self.lower_time + self.raise_time
-        self.start_diamond.set_visible(True)
-        self.start_diamond.xy = (self.start_x, self.top_y)
+        self.pick_phase = "LOWER"
+        self.action_timer = self.lower_time
+        self.start_diamond.set_visible(False)  # Start hidden, will show when picked
+
 
 class RedCrane(Crane):
     def __init__(self, ax, end_x, scanner_list, box_list, **kwargs):
@@ -261,6 +298,8 @@ class RedCrane(Crane):
         self.lower_start_time = float('inf')
         self.lower_planned_for_i = None
         self.target_box = None  # Which box to deliver to
+        self.drop_x = None  # Store drop position
+        self.drop_y = None
 
     def get_diamond_color(self):
         return '#66bb6a'
@@ -359,12 +398,13 @@ class RedCrane(Crane):
 
                 if abs(self.x - sx) <= ARRIVE_EPS:
                     if self.scanner_list[self.target_i].state == "ready":
-                        # Arrived and it's READY now: pick immediately
+                        # Arrived and it's READY now: start two-phase pick
                         close_ready_wait_callback(self.target_i)
                         self.target_box = self.box_list[self.scanner_list[self.target_i].get_target_box()]
                         self.state = "PICK_AT_SCANNER"
-                        self.action_timer = self.raise_time
-                        self.set_hoist(self.x, self.top_y, True)
+                        self.pick_phase = "LOWER"
+                        self.action_timer = self.lower_time
+                        self.set_hoist(self.x, self.carry_y, True)
                         self.time_under_scanner = 0.0
                     else:
                         # Not READY yet: enter controlled pre-lowering
@@ -376,21 +416,37 @@ class RedCrane(Crane):
                         self.set_hoist(self.x, y, True)
 
         elif self.state == "PICK_AT_SCANNER":
-            self.action_timer -= dt
-            prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.raise_time))
-            y = self.top_y + (self.carry_y - self.top_y) * prog
-            self.scanner_list[self.target_i].diamond.xy = (self.scanner_list[self.target_i].POS_X, y)
+            # Two-phase pick: LOWER then RAISE
+            if self.pick_phase == "LOWER":
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.lower_time))
+                y = self.carry_y + (self.top_y - self.carry_y) * prog
+                self.scanner_list[self.target_i].diamond.xy = (self.scanner_list[self.target_i].POS_X, y)
+                self.set_hoist(self.x, y, True)
 
-            if self.action_timer <= 0:
-                # lift complete → scanner becomes EMPTY
-                self.scanner_list[self.target_i].diamond.set_visible(False)
-                self.diamond.set_visible(True)
-                self.diamond.xy = (self.x, self.carry_y)
-                self.set_hoist(self.x, self.carry_y, False)
-                self.has_diamond = True
-                wait_time = self.scanner_list[self.target_i].pickup()  # This resets scanner to empty
-                self.state = "MOVE_TO_END"
-                self.time_under_scanner = 0.0
+                if self.action_timer <= 0:
+                    # Switch to RAISE phase
+                    self.pick_phase = "RAISE"
+                    self.action_timer = self.raise_time
+
+            elif self.pick_phase == "RAISE":
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.raise_time))
+                y = self.top_y + (self.carry_y - self.top_y) * prog
+                self.scanner_list[self.target_i].diamond.xy = (self.scanner_list[self.target_i].POS_X, y)
+                self.set_hoist(self.x, y, True)
+
+                if self.action_timer <= 0:
+                    # Pick complete
+                    self.scanner_list[self.target_i].diamond.set_visible(False)
+                    self.diamond.set_visible(True)
+                    self.diamond.xy = (self.x, self.carry_y)
+                    self.set_hoist(self.x, self.carry_y, False)
+                    self.has_diamond = True
+                    self.pick_phase = None
+                    wait_time = self.scanner_list[self.target_i].pickup()  # This resets scanner to empty
+                    self.state = "MOVE_TO_END"
+                    self.time_under_scanner = 0.0
 
         elif self.state == "MOVE_TO_END":
             # Move to the target box position using get_coordinates()
@@ -412,36 +468,57 @@ class RedCrane(Crane):
                 self.diamond.xy = (self.x, self.carry_y)
             if self.x >= target_x - 1e-6:
                 self.state = "DROP_AT_END"
-                self.action_timer = self.lower_time + self.raise_time  # DROP_TIME
+                self.drop_phase = "LOWER"
+                self.action_timer = self.lower_time
+                self.drop_x = None  # Reset drop position for fresh calculation
+                self.drop_y = None
                 self.set_hoist(self.x, self.carry_y, True)
 
         elif self.state == "DROP_AT_END":
-            self.action_timer -= dt
-            prog = max(0.0, min(1.0, 1.0 - self.action_timer / (self.lower_time + self.raise_time)))
+            # Two-phase drop: LOWER then RAISE
+            if self.drop_phase == "LOWER":
+                # Calculate drop position once at start of LOWER phase
+                if self.drop_x is None:
+                    if self.target_box and hasattr(self.target_box, 'get_coordinates'):
+                        self.drop_x, self.drop_y = self.target_box.get_coordinates()
+                    else:
+                        # Fallback or fix target_box if it's not properly set
+                        if isinstance(self.target_box, int) and self.target_box < len(self.box_list):
+                            self.target_box = self.box_list[self.target_box]
+                            self.drop_x, self.drop_y = self.target_box.get_coordinates()
+                        else:
+                            self.drop_x, self.drop_y = self.end_x, self.top_y
 
-            # Use get_coordinates() to get the exact drop position
-            if self.target_box and hasattr(self.target_box, 'get_coordinates'):
-                drop_x, drop_y = self.target_box.get_coordinates()
-            else:
-                # Fallback or fix target_box if it's not properly set
-                if isinstance(self.target_box, int) and self.target_box < len(self.box_list):
-                    self.target_box = self.box_list[self.target_box]
-                    drop_x, drop_y = self.target_box.get_coordinates()
-                else:
-                    drop_x, drop_y = self.end_x, self.top_y
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.lower_time))
+                y = self.carry_y + (self.drop_y - self.carry_y) * prog
+                self.diamond.xy = (self.drop_x, y)
+                self.set_hoist(self.x, y, True)
 
-            y = self.carry_y + (drop_y - self.carry_y) * prog
-            self.diamond.xy = (drop_x, y)
-            self.set_hoist(self.x, y, True)
+                if self.action_timer <= 0:
+                    # Switch to RAISE phase
+                    self.drop_phase = "RAISE"
+                    self.action_timer = self.raise_time
+                    # Deposit diamond
+                    self.diamond.set_visible(False)
+                    self.has_diamond = False
+                    if self.target_box and hasattr(self.target_box, 'add_diamond'):
+                        self.target_box.add_diamond()
+                    add_delivered_callback()
 
-            if self.action_timer <= 0:
-                self.set_hoist(self.x, drop_y, False)
-                self.diamond.set_visible(False)
-                self.has_diamond = False
-                if self.target_box and hasattr(self.target_box, 'add_diamond'):
-                    self.target_box.add_diamond()
-                add_delivered_callback()
-                self.state = "RETURN_TO_SCANNER"
+            elif self.drop_phase == "RAISE":
+                self.action_timer -= dt
+                prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.raise_time))
+                y = self.drop_y + (self.carry_y - self.drop_y) * prog
+                self.set_hoist(self.x, y, True)
+
+                if self.action_timer <= 0:
+                    # Drop complete
+                    self.set_hoist(self.x, self.carry_y, False)
+                    self.drop_phase = None
+                    self.drop_x = None  # Reset for next drop
+                    self.drop_y = None
+                    self.state = "RETURN_TO_SCANNER"
 
         elif self.state == "RETURN_TO_SCANNER":
             # return to last target scanner x (or center if none)
@@ -468,6 +545,7 @@ class RedCrane(Crane):
                 close_ready_wait_callback(self.target_i)
                 self.target_box = self.box_list[self.scanner_list[self.target_i].get_target_box()]
                 self.state = "PICK_AT_SCANNER"
+                self.pick_phase = "RAISE"  # Already lowered, just need to raise
                 self.action_timer = self.raise_time
                 self.set_hoist(self.x, self.top_y, True)
 
@@ -478,3 +556,5 @@ class RedCrane(Crane):
         self.lower_start_time = float('inf')
         self.lower_planned_for_i = None
         self.target_box = None
+        self.drop_x = None
+        self.drop_y = None

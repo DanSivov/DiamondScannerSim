@@ -12,7 +12,7 @@ def make_diamond(x, y, color, size=0.18, z=6):
 class Crane:
     def __init__(self, ax, color, initial_x, crane_width=0.6, crane_height=0.28,
                  rail_y=1.0, carry_y=4.0, top_y=7.5, v_traverse=3.0,
-                 lower_time=1.8, raise_time=1.8):
+                 lower_time=1.8, raise_time=1.8, safe_distance=0.8):
         self.ax = ax
         self.color = color
         self.x = initial_x
@@ -25,6 +25,7 @@ class Crane:
         self.v_traverse = v_traverse
         self.lower_time = lower_time
         self.raise_time = raise_time
+        self.safe_distance = safe_distance  # Store safe distance
 
         # State variables
         self.state = "WAIT"
@@ -74,9 +75,9 @@ class Crane:
         """Calculate travel time between positions"""
         return abs(x1 - x0) / self.v_traverse
 
-    def would_collide_with(self, other_crane, safe_distance=0.8):
+    def would_collide_with(self, other_crane):
         """Check if this crane would collide with another"""
-        return abs(self.x - other_crane.x) < safe_distance
+        return abs(self.x - other_crane.x) < self.safe_distance
 
     def reset(self):
         """Reset crane to initial state"""
@@ -150,9 +151,9 @@ class BlueCrane(Crane):
         scanning.sort(key=lambda t: t[1])
         return scanning[0][0]
 
-    def staging_x_for(self, i, safe_distance=0.8):
-        """Get staging position for scanner i"""
-        return self.scanner_list[i].POS_X - safe_distance - 1e-3
+    def staging_x_for(self, i):
+        """Get staging position for scanner i - park further left to avoid blocking red crane"""
+        return self.scanner_list[i].POS_X - (self.safe_distance * 1.2) - 1e-3
 
     def step(self, dt, red_crane, schedule_red_callback=None):
         """Step the blue crane simulation"""
@@ -208,7 +209,7 @@ class BlueCrane(Crane):
 
             step = self.v_traverse * dt
             new_pos = self.x + step if self.x < target_x else max(self.x - step, target_x)
-            if not abs(new_pos - red_crane.x) < 0.8:  # safe_distance check
+            if not abs(new_pos - red_crane.x) < self.safe_distance:
                 self.x = new_pos
 
             if self.has_diamond:
@@ -271,7 +272,7 @@ class BlueCrane(Crane):
         elif self.state == "RETURN_TO_START":
             step = self.v_traverse * dt
             new_pos = max(self.x - step, self.start_x)
-            if not abs(new_pos - red_crane.x) < 0.8:  # safe_distance check
+            if not abs(new_pos - red_crane.x) < self.safe_distance:
                 self.x = new_pos
 
             if self.x <= self.start_x + 1e-6:
@@ -363,6 +364,9 @@ class RedCrane(Crane):
             ready_exists = self.earliest_ready_scanner() is not None
             should_depart = (self.departure_time <= t_elapsed and self.departure_time < float('inf'))
 
+            if ready_exists or should_depart:
+                print(f"[RED CRANE] WAIT -> MOVE_TO_SCANNER at time {t_elapsed:.1f}, ready_exists={ready_exists}, should_depart={should_depart}")
+
             # first-cycle optimisation
             if not ready_exists and all(scanner.state == "scanning" for scanner in self.scanner_list) and self.departure_time == float('inf'):
                 i_scan = self.earliest_finishing_scan()
@@ -373,6 +377,7 @@ class RedCrane(Crane):
                     self.lower_start_time = t_ready - self.lower_time
                     self.lower_planned_for_i = i_scan
                     self.departure_time = max(self.lower_start_time - t_travel, t_elapsed)
+                    print(f"[RED CRANE] Scheduled departure for scanner {i_scan} at time {self.departure_time:.1f}")
 
             if ready_exists:
                 self.target_i = self.earliest_ready_scanner()
@@ -388,6 +393,7 @@ class RedCrane(Crane):
 
         elif self.state == "MOVE_TO_SCANNER":
             if self.target_i is None:
+                print(f"[RED CRANE] MOVE_TO_SCANNER with target_i=None, returning to WAIT")
                 self.state = "WAIT"
             else:
                 sx = self.scanner_list[self.target_i].POS_X
@@ -396,17 +402,27 @@ class RedCrane(Crane):
                 if not self.would_collide_with(blue_crane):
                     self.x = new_pos
 
+                # Debug: print when close to arrival
+                if abs(self.x - sx) <= 0.1 and abs(self.x - sx) > ARRIVE_EPS:
+                    print(f"[RED CRANE] Getting close to scanner {self.target_i}: distance={abs(self.x - sx):.4f}, scanner_state={self.scanner_list[self.target_i].state}")
+
                 if abs(self.x - sx) <= ARRIVE_EPS:
                     if self.scanner_list[self.target_i].state == "ready":
                         # Arrived and it's READY now: start two-phase pick
+                        print(f"[RED CRANE] Arrived at ready scanner {self.target_i}, entering PICK_AT_SCANNER")
                         close_ready_wait_callback(self.target_i)
                         self.target_box = self.box_list[self.scanner_list[self.target_i].get_target_box()]
+                        # ENSURE scanner diamond is visible and positioned correctly
+                        self.scanner_list[self.target_i].diamond.set_visible(True)
+                        self.scanner_list[self.target_i].diamond.xy = (self.scanner_list[self.target_i].POS_X, self.carry_y)
                         self.state = "PICK_AT_SCANNER"
                         self.pick_phase = "LOWER"
                         self.action_timer = self.lower_time
+                        print(f"[RED CRANE] Set state=PICK_AT_SCANNER, pick_phase=LOWER, action_timer={self.action_timer}")
                         self.set_hoist(self.x, self.carry_y, True)
                         self.time_under_scanner = 0.0
                     else:
+                        print(f"[RED CRANE] Arrived at scanner {self.target_i} but state is {self.scanner_list[self.target_i].state}, entering LOWER_FOR_PICK")
                         # Not READY yet: enter controlled pre-lowering
                         remaining_lower = max(0.0, self.lower_time - self.time_under_scanner)
                         self.state = "LOWER_FOR_PICK"
@@ -418,6 +434,9 @@ class RedCrane(Crane):
         elif self.state == "PICK_AT_SCANNER":
             # Two-phase pick: LOWER then RAISE
             if self.pick_phase == "LOWER":
+                if self.action_timer == self.lower_time:
+                    print(f"[RED CRANE] Starting LOWER phase, timer={self.action_timer}")
+
                 self.action_timer -= dt
                 prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.lower_time))
                 y = self.carry_y + (self.top_y - self.carry_y) * prog
@@ -426,6 +445,7 @@ class RedCrane(Crane):
 
                 if self.action_timer <= 0:
                     # Switch to RAISE phase
+                    print(f"[RED CRANE] LOWER complete, switching to RAISE phase")
                     self.pick_phase = "RAISE"
                     self.action_timer = self.raise_time
 
@@ -438,6 +458,7 @@ class RedCrane(Crane):
 
                 if self.action_timer <= 0:
                     # Pick complete
+                    print(f"[RED CRANE] RAISE complete, pick finished")
                     self.scanner_list[self.target_i].diamond.set_visible(False)
                     self.diamond.set_visible(True)
                     self.diamond.xy = (self.x, self.carry_y)
@@ -488,6 +509,11 @@ class RedCrane(Crane):
                             self.drop_x, self.drop_y = self.target_box.get_coordinates()
                         else:
                             self.drop_x, self.drop_y = self.end_x, self.top_y
+
+                if self.action_timer == self.lower_time:  # First frame
+                    # Ensure diamond is visible and positioned at carry height
+                    self.diamond.set_visible(True)
+                    self.diamond.xy = (self.drop_x, self.carry_y)
 
                 self.action_timer -= dt
                 prog = max(0.0, min(1.0, 1.0 - self.action_timer / self.lower_time))
@@ -542,11 +568,16 @@ class RedCrane(Crane):
             self.set_hoist(self.x, y, True)
 
             if self.scanner_list[self.target_i].state == "ready":
+                print(f"[RED CRANE] Scanner ready during LOWER_FOR_PICK, transitioning to PICK_AT_SCANNER RAISE phase")
                 close_ready_wait_callback(self.target_i)
                 self.target_box = self.box_list[self.scanner_list[self.target_i].get_target_box()]
+                # Make sure scanner diamond is visible before transitioning
+                self.scanner_list[self.target_i].diamond.set_visible(True)
+                self.scanner_list[self.target_i].diamond.xy = (self.scanner_list[self.target_i].POS_X, self.top_y)
                 self.state = "PICK_AT_SCANNER"
                 self.pick_phase = "RAISE"  # Already lowered, just need to raise
                 self.action_timer = self.raise_time
+                print(f"[RED CRANE] Set state=PICK_AT_SCANNER, pick_phase=RAISE, action_timer={self.action_timer}")
                 self.set_hoist(self.x, self.top_y, True)
 
         self.update_position()

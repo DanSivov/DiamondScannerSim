@@ -8,7 +8,10 @@ import math
 import matplotlib.pyplot as plt
 from .Scanner import DScanner
 
-from .config import S_W_SCANNER, S_H_SCANNER, N_BOXES
+# Import ALL necessary config values
+from . import config
+from .config import (S_W_SCANNER, S_H_SCANNER, N_BOXES, FPS, DT,
+                     VMAX_CLAW_X, T_Z, D_CLAW_SAFE_DISTANCE)
 from .endBox import Box
 from .Crane import BlueCrane, RedCrane, make_diamond
 from matplotlib.animation import FuncAnimation
@@ -130,12 +133,18 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     ax.plot([0.6, END_BOX_X + 0.4], [RAIL_Y, RAIL_Y], color='black', lw=4, alpha=0.85, solid_capstyle='round')
 
     # -----------------------------
-    # Create Cranes
+    # Create Cranes with config values
     # -----------------------------
     blue_crane = BlueCrane(ax, START_X, scanner_List,
-                           rail_y=RAIL_Y, carry_y=CARRY_Y, top_y=TOP_Y)
+                           rail_y=RAIL_Y, carry_y=CARRY_Y, top_y=TOP_Y,
+                           v_traverse=VMAX_CLAW_X / 10,  # Convert cm/s to units/s
+                           lower_time=T_Z, raise_time=T_Z,
+                           safe_distance=D_CLAW_SAFE_DISTANCE / 10)  # Convert cm to units
     red_crane = RedCrane(ax, END_X, scanner_List, box_list,
-                         rail_y=RAIL_Y, carry_y=CARRY_Y, top_y=TOP_Y)
+                         rail_y=RAIL_Y, carry_y=CARRY_Y, top_y=TOP_Y,
+                         v_traverse=VMAX_CLAW_X / 10,  # Convert cm/s to units/s
+                         lower_time=T_Z, raise_time=T_Z,
+                         safe_distance=D_CLAW_SAFE_DISTANCE / 10)  # Convert cm to units
 
     # Timer and metrics
     timer_text = ax.text(5.5, 9.2, "Time: 0.0 s", ha='center', fontsize=12, fontweight='bold')
@@ -158,10 +167,8 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
         box_count_texts.append(count_text)
 
     # -----------------------------
-    # Simulation parameters
+    # Simulation parameters from config
     # -----------------------------
-    FPS = 60
-    DT = 1.0 / FPS
     ARRIVE_EPS = 1e-6
 
     t_elapsed = 0.0
@@ -380,7 +387,7 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     skip_button.on_clicked(on_skip)
 
     # -----------------------------
-    # Animation
+    # Animation - Use config FPS
     # -----------------------------
     def update(_):
         if not is_paused:

@@ -226,39 +226,59 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     # Reset (for skip backward)
     # -----------------------------
     def reset_simulation():
-        nonlocal t_elapsed, delivered_total
-        nonlocal total_ready_wait
+        nonlocal t_elapsed, delivered_total, total_ready_wait
 
+        # CRITICAL: Set time and counters to ZERO first
         t_elapsed = 0.0
+        delivered_total = 0
+        total_ready_wait = 0.0
+
+        # Update all text displays immediately
         timer_text.set_text("Time: 0.0 s")
         throughput_text.set_text("Diamonds/min: --")
+        end_count_text.set_text(f"Total num of diamonds: 0")
+        total_wait_text.set_text("Total ready-wait: 0.0 s")
 
-        # Reset cranes
+        # Reset cranes to initial state
         blue_crane.reset()
         red_crane.reset()
 
-        # Reset scanners
+        # Reset ALL scanners completely
         for scanner in scanner_List:
             scanner.state = "empty"
             scanner.timer = 0.0
             scanner.ready_time = None
             scanner.target_box_id = None
             scanner.diamond.set_visible(False)
+            scanner.scans_done = 0
 
         # Reset ready wait tracking
         for i in range(N_SCANNERS):
             ready_wait_start[i] = None
             ready_wait_labels[i].set_text("")
-        total_ready_wait = 0.0
-        total_wait_text.set_text("Total ready-wait: 0.0 s")
 
-        # Reset boxes
+        # Reset boxes and clear ALL visual diamonds
         for box in box_list:
-            box.reset()
-        delivered_total = 0
-        end_count_text.set_text(f"Total num of diamonds: {delivered_total}")
+            # Remove all delivered diamond patches from the plot
+            for diamond in box.delivered_diamonds:
+                try:
+                    # Try to set invisible instead of removing
+                    diamond.set_visible(False)
+                    # If it has a remove method that works, use it
+                    if hasattr(diamond, 'remove'):
+                        diamond.remove()
+                except Exception as e:
+                    # If removal fails, just continue
+                    pass
+            # Clear the list
+            box.delivered_diamonds.clear()
+            # Reset box counter to 0
+            box.diamond_count = 0
+
+        # Update box count displays to show 0
         update_box_counts()
 
+        # Force canvas redraw
         fig.canvas.draw_idle()
 
     # init visuals
@@ -362,16 +382,27 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
 
     def fast_forward_to(target_time_s):
         nonlocal is_paused
-        prev_paused = is_paused
         is_paused = True
 
-        # If target earlier than now, reset first
-        if target_time_s < t_elapsed - 1e-9:
+        # ALWAYS reset to 0 if target is earlier than now, OR if target is 0
+        # This ensures clean state when skipping backwards
+        if target_time_s < t_elapsed - 1e-9 or target_time_s == 0:
+            print(f"Resetting simulation (current: {t_elapsed:.1f}s, target: {target_time_s:.1f}s)")
             reset_simulation()
 
-        ff_dt = 0.1  # Increased timestep for faster skipping
+            # If target is 0, we're done - just stay at reset state
+            if target_time_s <= 1e-9:
+                is_paused = True
+                pause_button.label.set_text('Resume')
+                fig.canvas.draw_idle()
+                return
+
+        # Now simulate forward from current time (0 after reset) to target
+        ff_dt = 0.1  # Timestep for faster skipping
         max_iterations = int((target_time_s - t_elapsed) / ff_dt) + 1000  # Safety limit
         iterations = 0
+
+        print(f"Fast forwarding from {t_elapsed:.1f}s to {target_time_s:.1f}s")
 
         while iterations < max_iterations:
             remaining = target_time_s - t_elapsed
@@ -386,11 +417,13 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
             iterations += 1
 
         if iterations >= max_iterations:
-            print(f"Fast forward stopped at max iterations. Time: {t_elapsed}")
+            print(f"Fast forward stopped at max iterations. Time: {t_elapsed:.1f}s")
 
+        # Update throughput and pause state
         update_throughput()
         is_paused = True
         pause_button.label.set_text('Resume')
+        print(f"Fast forward complete. Final time: {t_elapsed:.1f}s, Diamonds: {delivered_total}")
         fig.canvas.draw_idle()
 
     def on_skip(_event):

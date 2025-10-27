@@ -49,6 +49,25 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     plt.style.use('ggplot')
     fig, ax = plt.subplots(figsize=(15, 5.5))
     plt.subplots_adjust(bottom=0.22)
+
+    # Position window at top right of screen
+    try:
+        fig_manager = plt.get_current_fig_manager()
+        # For TkAgg backend (Windows default)
+        if hasattr(fig_manager, 'window'):
+            fig_manager.window.update_idletasks()
+            screen_width = fig_manager.window.winfo_screenwidth()
+            window_width = fig_manager.window.winfo_reqwidth()
+
+            # Position at top right (with small margin from edge)
+            x = screen_width - window_width - 10  # 10px margin from right edge
+            y = 10  # 10px margin from top
+
+            # Move window to top right
+            fig_manager.window.wm_geometry(f"+{x}+{y}")
+    except Exception as e:
+        print(f"Could not position window: {e}")
+
     ax.set_xlim(0, 15)
     ax.set_ylim(0, 9.6)
     ax.set_aspect('equal')

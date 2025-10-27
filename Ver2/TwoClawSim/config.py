@@ -6,7 +6,7 @@ def timeToTravel(D,V_INIT,V_MAX,A):
     S_VMAX = (V_MAX**2 - V_INIT**2) / (2 * A)
 
     if S_VMAX >= D:
-        # Never reach vmax ï¿½ solve s = ut + 0.5*a*t^2
+        # Never reach vmax — solve s = ut + 0.5*a*t^2
         # 0.5*a*t^2 + u*t - distance = 0
         A = 0.5 * A
         B = V_INIT
@@ -45,6 +45,6 @@ D_CLAW_SAFE_DISTANCE = 8.0 # safe distance to avoid claw collisions
 
 S_W_SCANNER = 8.0
 S_H_SCANNER = 15.0
-T_SCAN = 20.0
+T_SCAN = 18.0
 
 N_BOXES = 10

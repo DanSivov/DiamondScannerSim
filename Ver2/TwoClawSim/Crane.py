@@ -10,9 +10,9 @@ def make_diamond(x, y, color, size=0.18, z=6):
     )
 
 class Crane:
-    def __init__(self, ax, color, initial_x, crane_width=0.6, crane_height=0.28,
+    def __init__(self, ax, color, initial_x, crane_width=6, crane_height=2.8,
                  rail_y=1.0, carry_y=4.0, top_y=7.5, v_traverse=3.0,
-                 lower_time=1.8, raise_time=1.8, safe_distance=0.8):
+                 lower_time=1.8, raise_time=1.8, safe_distance=10):
         self.ax = ax
         self.color = color
         self.x = initial_x

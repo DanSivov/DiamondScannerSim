@@ -1,5 +1,5 @@
-#TwoClaw.py
-#Improvements from Ver1:
+# TwoClaw.py
+# Improvements from Ver1:
 #   Add failure of system and failure response. I.E. a dropped diamond
 #   Add scanner sorting, scanner will give specific box to take diamond
 # Otherwise same system: two claws, n scanners (n = {1,2,3,4}).
@@ -15,30 +15,40 @@ from .config import (S_W_SCANNER, S_H_SCANNER, N_BOXES, FPS, DT,
 from .endBox import Box
 from .Crane import BlueCrane, RedCrane, make_diamond
 from matplotlib.animation import FuncAnimation
-from matplotlib.patches import Circle, Rectangle, RegularPolygon
+from matplotlib.patches import Circle, Rectangle
 from matplotlib.widgets import Button, TextBox
 
-#Functions
-def timeToTravel(x0,x1,V_INIT,V_MAX,A):
-    D = abs(x0 - x1) * 10
-    # Distance needed to reach vmax
+# -----------------------------
+# Display scaling
+# -----------------------------
+MM_PER_UNIT = 10.0  # 1 display unit = 10 mm
+
+def mm_to_display(mm):
+    return mm / MM_PER_UNIT
+
+# -----------------------------
+# Functions
+# -----------------------------
+def timeToTravel(x0, x1, V_INIT, V_MAX, A):
+    """Travel time between two x positions (in mm) with kinematics in mm/s, mm/s²"""
+    D = abs(x0 - x1)  # already in mm
     S_VMAX = (V_MAX**2 - V_INIT**2) / (2 * A)
 
     if S_VMAX >= D:
-        # Never reach vmax — solve s = ut + 0.5*a*t^2
-        # 0.5*a*t^2 + u*t - distance = 0
-        A = 0.5 * A
-        B = V_INIT
-        C = -D
-        t = (-B + math.sqrt(B**2 - 4*A*C)) / (2*A)
+        a = 0.5 * A
+        b = V_INIT
+        c = -D
+        t = (-b + math.sqrt(b**2 - 4*a*c)) / (2*a)
         return t
     else:
-        # Accelerate to vmax
         t_accel = (V_MAX - V_INIT) / A
         s_const = D - S_VMAX
         t_const = s_const / V_MAX
         return t_accel + t_const
 
+# -----------------------------
+# Main Simulation
+# -----------------------------
 def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     assert 1 <= N_SCANNERS <= 4, "N_SCANNERS must be 1..4"
     assert loading_strategy in ["closest", "furthest"], "loading_strategy must be 'closest' or 'furthest'"
@@ -53,54 +63,50 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     # Position window at top right of screen
     try:
         fig_manager = plt.get_current_fig_manager()
-        # For TkAgg backend (Windows default)
         if hasattr(fig_manager, 'window'):
             fig_manager.window.update_idletasks()
             screen_width = fig_manager.window.winfo_screenwidth()
             window_width = fig_manager.window.winfo_reqwidth()
-
-            # Position at top right (with small margin from edge)
-            x = screen_width - window_width - 10  # 10px margin from right edge
-            y = 10  # 10px margin from top
-
-            # Move window to top right
+            x = screen_width - window_width - 10
+            y = 10
             fig_manager.window.wm_geometry(f"+{x}+{y}")
     except Exception as e:
         print(f"Could not position window: {e}")
 
-    ax.set_xlim(0, 15)
-    ax.set_ylim(0, 9.6)
+    # -----------------------------
+    # Layout (converted from mm)
+    # -----------------------------
+    TOP_Y   = mm_to_display(60.0)     # scanner Y
+    RAIL_Y  = mm_to_display(200.0)    # rail Y
+    CARRY_Y = mm_to_display(100.0)    # midway between pickup (0) and rail (200)
+    START_X = mm_to_display(-210.0)   # blue crane home
+    END_X   = mm_to_display(210.0)    # red crane home
+
+    SCANNER_WIDTH  = mm_to_display(S_W_SCANNER)   # 80 mm
+    SCANNER_HEIGHT = mm_to_display(S_H_SCANNER)  # 150 mm
+
+
+    # Axes limits based on rail extents
+    ax.set_xlim(mm_to_display(-260.0) - mm_to_display(50),
+                mm_to_display(260.0) + mm_to_display(50))
+    ax.set_ylim(mm_to_display(0.0) - mm_to_display(20),
+                mm_to_display(200.0) + mm_to_display(50))
     ax.set_aspect('equal')
     ax.axis('off')
 
     # -----------------------------
-    # Layout
+    # Scanners
     # -----------------------------
-    TOP_Y = 7.5
-    RAIL_Y = 1.0
-    CARRY_Y = 4.0
-    START_X = 1.2
-    END_X = 10
-
-    # Evenly place scanners around center while keeping margins
-    center = 5.5
-    spacing = 1.2 # distance between scanners
+    center = mm_to_display(0.0)
+    spacing = mm_to_display(120.0)  # ~120 mm spacing between scanners
     scanner_List = []
-
-    SCANNER_WIDTH = S_W_SCANNER / 10
-    SCANNER_HEIGHT = S_H_SCANNER / 10
 
     if N_SCANNERS == 1:
         scanner_List.append(DScanner(center))
-        # Draw the scanner box
         ax.add_patch(Rectangle(
             (center - SCANNER_WIDTH/2, TOP_Y - SCANNER_HEIGHT/2),
-            SCANNER_WIDTH,
-            SCANNER_HEIGHT,
-            facecolor='lightblue',
-            edgecolor='black',
-            lw=2,
-            zorder=3
+            SCANNER_WIDTH, SCANNER_HEIGHT,
+            facecolor='lightblue', edgecolor='black', lw=2, zorder=3
         ))
     else:
         total_span = spacing * (N_SCANNERS - 1)
@@ -108,69 +114,80 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
         for i in range(N_SCANNERS):
             x_pos = left + i * spacing
             scanner_List.append(DScanner(x_pos))
-            # Draw the scanner box
             ax.add_patch(Rectangle(
                 (x_pos - SCANNER_WIDTH/2, TOP_Y - SCANNER_HEIGHT/2),
-                SCANNER_WIDTH,
-                SCANNER_HEIGHT,
-                facecolor='lightblue',
-                edgecolor='black',
-                lw=2,
-                zorder=3
+                SCANNER_WIDTH, SCANNER_HEIGHT,
+                facecolor='lightblue', edgecolor='black', lw=2, zorder=3
             ))
 
-    # Add scanner diamonds to plot
     for scanner in scanner_List:
         scanner.add_diamond_to_plot(ax)
 
     # Process line
-    ax.plot([START_X + 0.35, END_X - 0.35], [TOP_Y, TOP_Y], color='gray', linewidth=2, alpha=0.6)
+    ax.plot([START_X + 0.35, END_X - 0.35], [TOP_Y, TOP_Y],
+            color='gray', linewidth=2, alpha=0.6)
 
     # Start circle
-    start_circle = Circle((START_X, TOP_Y), 0.35, fc='white', ec='black', lw=2, zorder=2)
+    start_circle = Circle((START_X, TOP_Y), 0.35,
+                          fc='white', ec='black', lw=2, zorder=2)
     ax.add_patch(start_circle)
     ax.text(START_X, TOP_Y + 0.8, "start", ha='center')
 
-    #create end boxes - all stacked at the same location
+    # End boxes (stacked at END_X)
     box_list = []
-    END_BOX_X = END_X  # All boxes at the same x position
-
+    END_BOX_X = END_X
     for i in range(N_BOXES):
         box_list.append(Box(i, END_BOX_X, TOP_Y))
-        # Draw all boxes at the same position, stacked visually
-        endtempCircle = Circle((END_BOX_X, TOP_Y), 0.4, fc='white', ec='black', lw=2, zorder=2)
+        endtempCircle = Circle((END_BOX_X, TOP_Y), 0.4,
+                               fc='white', ec='black', lw=2, zorder=2)
         ax.add_patch(endtempCircle)
+    # ax.text(END_BOX_X, TOP_Y + 0.8, f"Boxes 1-{N_BOXES}", ha='center')
 
-    # Single label for the stacked boxes
-    ax.text(END_BOX_X, TOP_Y + 0.8, f"Boxes 1-{N_BOXES}", ha='center')
-
-    #counters
+    # Counters
     delivered_total = 0
-    end_count_text = ax.text(END_X + 1, TOP_Y + 1.6, "Total num of diamonds: "+f"{delivered_total}", ha='center', va='center', fontsize=10)
+    end_count_text = ax.text(END_X + 1, TOP_Y + 1.6,
+                             f"Total num of diamonds: {delivered_total}",
+                             ha='center', va='center', fontsize=10)
 
-    #rail
-    ax.plot([0.6, END_BOX_X + 0.4], [RAIL_Y, RAIL_Y], color='black', lw=4, alpha=0.85, solid_capstyle='round')
+    # Rail line
+    ax.plot([START_X, END_BOX_X + 0.4], [RAIL_Y, RAIL_Y],
+            color='black', lw=4, alpha=0.85, solid_capstyle='round')
 
     # -----------------------------
-    # Create Cranes with config values
+    # Cranes
     # -----------------------------
+    v_traverse_units = VMAX_CLAW_X / MM_PER_UNIT
+    safe_distance_units = D_CLAW_SAFE_DISTANCE / MM_PER_UNIT
+
     blue_crane = BlueCrane(ax, START_X, scanner_List,
                            rail_y=RAIL_Y, carry_y=CARRY_Y, top_y=TOP_Y,
-                           v_traverse=VMAX_CLAW_X / 10,  # Convert cm/s to units/s
+                           v_traverse=v_traverse_units,
                            lower_time=T_Z, raise_time=T_Z,
-                           safe_distance=D_CLAW_SAFE_DISTANCE / 10)  # Convert cm to units
+                           safe_distance=safe_distance_units)
+
     red_crane = RedCrane(ax, END_X, scanner_List, box_list,
                          rail_y=RAIL_Y, carry_y=CARRY_Y, top_y=TOP_Y,
-                         v_traverse=VMAX_CLAW_X / 10,  # Convert cm/s to units/s
+                         v_traverse=v_traverse_units,
                          lower_time=T_Z, raise_time=T_Z,
-                         safe_distance=D_CLAW_SAFE_DISTANCE / 10)  # Convert cm to units
+                         safe_distance=safe_distance_units)
 
     # Timer and metrics
-    timer_text = ax.text(5.5, 9.2, "Time: 0.0 s", ha='center', fontsize=12, fontweight='bold')
-    throughput_text = ax.text(10.6, 8.5, "Diamonds/min: --", ha='left', fontsize=11, fontweight='bold')
-    total_ready_wait = 0.0
-    total_wait_text = ax.text(10.6, 8.1, "Total ready-wait: 0.0 s", ha='left', fontsize=11, fontweight='bold', color='black')
+    timer_text = ax.text(0.5, 1.02, "Time: 0.0 s",
+                         ha='left', va='bottom',
+                         fontsize=12, fontweight='bold',
+                         transform=ax.transAxes)
 
+    throughput_text = ax.text(0.5, 0.97, "Diamonds/min: --",
+                          ha='left', va='bottom',
+                          fontsize=11, fontweight='bold',
+                          transform=ax.transAxes)
+
+    total_ready_wait = 0.0
+    total_wait_text = ax.text(0.02, 0.92, "Total ready-wait: 0.0 s",
+                          ha='left', va='bottom',
+                          fontsize=11, fontweight='bold',
+                          color='black',
+                          transform=ax.transAxes)
     # Per-scanner ready-wait tracking and labels
     ready_wait_start = [None for _ in range(N_SCANNERS)]
     ready_wait_labels = []
@@ -179,12 +196,13 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
                       color='red', fontsize=10, fontweight='bold', zorder=10)
         ready_wait_labels.append(lbl)
 
-    # Box count displays - stacked vertically since boxes are at same location
+    # Box count displays - stacked vertically since boxes are at same location removed for now
+    """
     box_count_texts = []
     for i, box in enumerate(box_list):
         count_text = ax.text(END_BOX_X + 1.2, TOP_Y + 0.3 - (i * 0.3), f"Box {i+1}: 0", ha='left', fontsize=9)
         box_count_texts.append(count_text)
-
+    """
     # -----------------------------
     # Simulation parameters from config
     # -----------------------------
@@ -209,8 +227,10 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
             throughput_text.set_text("Diamonds/min: --")
 
     def update_box_counts():
+        """
         for i, (box, text) in enumerate(zip(box_list, box_count_texts)):
             text.set_text(f"Box {i+1}: {box.get_count()}")
+        """
 
     def close_ready_wait(i):
         nonlocal total_ready_wait
@@ -398,7 +418,7 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
                 return
 
         # Now simulate forward from current time (0 after reset) to target
-        ff_dt = 0.1  # Timestep for faster skipping
+        ff_dt = 0.01  # Timestep for faster skipping
         max_iterations = int((target_time_s - t_elapsed) / ff_dt) + 1000  # Safety limit
         iterations = 0
 

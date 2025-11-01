@@ -98,7 +98,7 @@ def runSimulation(N_SCANNERS: int = 1, loading_strategy: str = "closest"):
     # Scanners
     # -----------------------------
     center = mm_to_display(0.0)
-    spacing = mm_to_display(120.0)  # ~120 mm spacing between scanners
+    spacing = mm_to_display(180.0)  # ~180 mm spacing between scanners
     scanner_List = []
 
     if N_SCANNERS == 1:

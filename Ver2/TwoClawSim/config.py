@@ -45,9 +45,9 @@ T_Z = timeToTravel(D_Z, 0, VMAX_CLAW_Z, A_CLAW_Z)
 
 D_CLAW_SAFE_DISTANCE = 80.0  # mm (was 8.0 cm)
 
-# Scanner dimensions
-S_W_SCANNER = 80.0    # mm (was 8.0 cm)
-S_H_SCANNER = 150.0   # mm (was 15.0 cm)
+# Scanner dimensions the dimensions where the wrong way around
+S_W_SCANNER = 150.0    # mm (was 15.0 cm)
+S_H_SCANNER = 80.0   # mm (was 8.0 cm)
 
 T_SCAN = 18.0         # seconds (unchanged)
 

@@ -1,36 +1,31 @@
 # Diamond Scanner Simulation
 
-The code contains two version. Ver1 for the original base implementation of the idea
-and Ver2 a refactored and more optimised version. Bellow I outline the overview for Ver2
+The code contains three versions. Ver1 is purely for legacy. While Ver2 and Ver3 are made around different ways
+to position the start/end locations in relation to the scanners.
 
 ## Overview
 
-This simulation models a diamond processing facility where:
+This simulation models a diamond processing machine where:
 - **Red & Blue Cranes**: Automated robotic arms that pick and place diamonds
-- **Scanner**: Diamond detection and analysis system
-- **End Boxes**: Sorts diamonds into respective boxes
-- **Rail**: Provides movement for the cranes 
-## Key Features
-
-- **Optimized Crane Movement**: Pre-emptive positioning saves >1.8s per cycle
-- **Real-time Visualization**: Live simulation with ggplot-style graphics
-- **State Machine Logic**: Crane coordination and timing
-- **Configurable Parameters**: Adjustable speeds, timing, and positions
+- **Scanner**: Diamond analysis system
+- **Start Point**: where un-scanned diamonds are taken from 
+- **End Boxes**: End destination of scanned diamonds
+- **Rail**: Provides movement for the cranes
 
 ## Usage
 
-There are two runnable options: 
-- `Main.py` will run the simulation with two cranes and 1-4 scanners. Using the "First" logic
-- `PreformanceTester.py` will run a tester function, currently programmed to compare the difference in "First" and "Last" Logic
+The code for both versions is isolated and is run separately: 
+- To run Ver2, open the Ver2 folder and go to `main.py`,
+this will pop up a window where you can choose to run with 1 or 2 scanners. As well as being able to change the config values through another pop-up.
+- To run Ver3, open the Ver3 folder and go to `main.py`, this will pop up a window where you can choose the simulation speed.
+It is recommended to use the Recommended setting, in it each second is around 2 seconds in the real world (depends on machine). 
+Such delay is caused by overhead and by running it in the realistic speed mode there is a possibility of bugs happening, especially with the skip button.
+I am working on fixing it, most likely the culprit is the crane.py file in Ver3.
 
 ## Architecture
 
-The simulation uses object-oriented design with:
-- `Crane` class for robotic arm logic
+Both simulations use object-oriented design with:
+- `crane` class for robotic arm logic
 - State-based movement control
 - Event-driven scanner coordination
 - Matplotlib-based real-time display
-
-## Performance
-
-Optimizations include early crane extension and intelligent timing coordination between multiple automated systems.

@@ -1,4 +1,4 @@
-# Main.py
+# main.py
 # Launcher: choose n of scanners (1-2) and configure settings
 
 import tkinter as tk

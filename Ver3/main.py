@@ -15,8 +15,8 @@ def choose_mode():
         root.destroy()
 
     tk.Label(root, text="Choose Simulation Speed Mode:", font=("Arial", 12)).pack(pady=10)
-    tk.Button(root, text="Normal Speed", width=20, command=lambda: set_mode("normal")).pack(pady=5)
-    tk.Button(root, text="Debug (Slow)", width=20, command=lambda: set_mode("debug")).pack(pady=5)
+    tk.Button(root, text="Realistic Speed", width=20, command=lambda: set_mode("normal")).pack(pady=5)
+    tk.Button(root, text="Recommended Speed", width=20, command=lambda: set_mode("debug")).pack(pady=5)
 
     root.mainloop()
     return choice["mode"]

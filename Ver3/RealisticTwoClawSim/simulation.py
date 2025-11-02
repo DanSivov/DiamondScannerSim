@@ -53,6 +53,7 @@ class SimulationController:
         self.is_paused = False
         self.diamonds_delivered = 0
         self.diamonds_scanned = 0
+        self.simulation_started = False  # Timer starts when blue crane first picks up diamond
 
         # Metrics
         self.total_ready_wait_time = 0.0
@@ -376,16 +377,26 @@ class SimulationController:
     def step_simulation(self, dt):
         """Execute one simulation time step"""
         dt *= config.SIM_SPEED_MULTIPLIER # speed
+
+        # Check if simulation should start (blue crane starts picking up first diamond)
+        if not self.simulation_started:
+            if (self.blue_crane.state == "PICK_AT_START" and
+                    self.blue_crane.pick_phase == "LOWER"):
+                # Blue crane is lowering to pick up first diamond - start timer!
+                self.simulation_started = True
+
         # Update scanners
         for scanner in self.scanner_list:
             scanner.update(dt, self.t_elapsed)
             scanner.update_state_label()
 
-            # Track Total Ready Wait (TRW) time - time diamonds spend waiting in "ready" state
-        for scanner in self.scanner_list:
-            if scanner.state == "ready":
-                # Diamond is ready but not yet being picked up - accumulate wait time
-                self.total_ready_wait_time += dt
+        # Track Total Ready Wait (TRW) time - time diamonds spend waiting in "ready" state
+        # Only count if simulation has started
+        if self.simulation_started:
+            for scanner in self.scanner_list:
+                if scanner.state == "ready":
+                    # Diamond is ready but not yet being picked up - accumulate wait time
+                    self.total_ready_wait_time += dt
 
         # Update cranes
         self.blue_crane.step(dt, self.blue_crane, self.red_crane)
@@ -407,8 +418,9 @@ class SimulationController:
         if current_scanned > self.diamonds_scanned:
             self.diamonds_scanned = current_scanned
 
-        # Update time
-        self.t_elapsed += dt
+        # Update time - only if simulation has started
+        if self.simulation_started:
+            self.t_elapsed += dt
 
         # Update metrics display
         self.update_metrics_display()
@@ -419,6 +431,7 @@ class SimulationController:
         self.diamonds_delivered = 0
         self.diamonds_scanned = 0
         self.total_ready_wait_time = 0.0
+        self.simulation_started = False  # Reset timer start flag
 
         # Reset scanners
         for scanner in self.scanner_list:

@@ -504,7 +504,7 @@ class SimulationController:
     def get_scanner_color(self, state):
         """Get color for scanner based on its state"""
         if state == "empty":
-            return '#00CED1'  # Cyan - idle/empty
+            return '#D3D3D3'  # Cyan - idle/empty
         elif state == "scanning":
             return '#FFA500'  # Orange - actively scanning
         elif state == "ready":

@@ -102,7 +102,10 @@ class SimulationController:
 
         # CRITICAL: Always do a full reset before skipping
         # This ensures clean state regardless of skip direction
-        print(f"Resetting simulation for skip to t={target_time:.1f}s...")
+        print(f"\n{'='*70}")
+        print(f"SKIP TO t={target_time:.1f}s")
+        print(f"{'='*70}")
+        print("Resetting simulation...")
         self.full_reset()
 
         # If target time is 0, we're done (just reset)
@@ -110,18 +113,31 @@ class SimulationController:
             print("Skip complete: Reset to t=0")
             self.is_paused = was_paused
             self.fig.canvas.draw_idle()
-            if self.side_view:
-                self.side_view.update()
+            if self.enable_side_view:
+                self.update_side_view()
             return
 
         # Fast-forward to target_time with robust error handling
         print(f"Fast-forwarding to t={target_time:.1f}s...")
 
-        # Use smaller time steps for more stable simulation during skip
-        skip_dt = min(config.DT, 0.1)  # Cap at 0.1s steps
-        max_steps = int(target_time / skip_dt) + 1000  # Safety limit
+        # Use SMALLER time steps to prevent collision violations
+        # Larger steps cause cranes to "jump" past collision checks
+        # CRITICAL: Must use small dt to maintain collision detection
+        skip_dt = config.DT  # Use normal simulation timestep (1/60 = 0.0167s)
+
+        # For very large skips, we can afford to skip visual updates
+        # but we MUST keep physics/collision timestep small
+        print(f"Using dt={skip_dt:.4f}s per step (maintaining collision detection)")
+
+        # Calculate reasonable max steps (with generous buffer)
+        max_steps = int(target_time / skip_dt) + 10000
         step_count = 0
         last_valid_state = None
+        last_t = 0.0
+
+        # Progress reporting thresholds (report every 5% for better feedback)
+        progress_milestones = [int(target_time * p / 100) for p in range(5, 100, 5)]
+        next_milestone_idx = 0
 
         try:
             while self.t_elapsed < target_time and step_count < max_steps:
@@ -136,16 +152,28 @@ class SimulationController:
                 # Execute one simulation step
                 self.step_simulation(skip_dt, skip_mode=True)
 
-                # Safety check: ensure time is progressing
-                if step_count > 0 and step_count % 500 == 0:
-                    if self.t_elapsed < target_time * 0.01:  # Haven't made 1% progress after 500 steps
-                        print(f"Warning: Simulation appears stuck at t={self.t_elapsed:.2f}s")
-                        break
+                # Progress reporting (every 5% of target time)
+                if (next_milestone_idx < len(progress_milestones) and
+                        self.t_elapsed >= progress_milestones[next_milestone_idx]):
+                    progress_pct = int((self.t_elapsed / target_time) * 100)
+                    print(f"  Progress: {progress_pct}% (t={self.t_elapsed:.1f}s, {self.diamonds_delivered} diamonds)")
+                    next_milestone_idx += 1
+
+                # Safety check: ensure time is actually progressing
+                # Check every 5000 steps
+                if step_count > 0 and step_count % 5000 == 0:
+                    time_delta = self.t_elapsed - last_t
+                    expected_delta = skip_dt * 5000
+                    if time_delta < expected_delta * 0.5:  # Should have made at least 50% of expected progress
+                        print(f"Warning: Slow progress at t={self.t_elapsed:.2f}s")
+                        print(f"  Expected {expected_delta:.2f}s, got {time_delta:.2f}s over last 5000 steps")
+                        # Don't break, just warn
+                    last_t = self.t_elapsed
 
                 step_count += 1
 
-                # Every 1000 steps, clean up any stale movement tracking
-                if step_count % 1000 == 0:
+                # Every 10000 steps, clean up any stale movement tracking
+                if step_count % 10000 == 0:
                     self.cleanup_crane_tracking()
 
         except Exception as e:
@@ -166,6 +194,7 @@ class SimulationController:
         if step_count >= max_steps:
             print(f"Warning: Skip loop exceeded maximum steps ({max_steps})")
             print(f"Stopped at t={self.t_elapsed:.2f}s")
+            print(f"This might indicate a simulation issue or the target time is too large")
 
         # Post-skip cleanup and validation
         print("Performing post-skip cleanup...")
@@ -179,7 +208,9 @@ class SimulationController:
         if self.enable_side_view:
             self.update_side_view()
 
-        print(f"Skip complete: t={self.t_elapsed:.1f}s, Diamonds={self.diamonds_delivered}")
+        print(f"{'='*70}")
+        print(f"Skip complete: t={self.t_elapsed:.1f}s, {self.diamonds_delivered} diamonds delivered")
+        print(f"{'='*70}\n")
 
     def full_reset(self):
         """Perform a complete reset of the simulation"""
@@ -253,6 +284,43 @@ class SimulationController:
                     crane.pick_phase = None
                 if crane.drop_phase is not None:
                     crane.drop_phase = None
+
+        # CRITICAL: Check for collision violations
+        distance_between_cranes = abs(self.blue_crane.x - self.red_crane.x)
+        safe_distance = config.D_CLAW_SAFE_DISTANCE
+
+        if distance_between_cranes < safe_distance:
+            print(f"\n{'!'*70}")
+            print(f"ERROR: Collision violation detected after skip!")
+            print(f"  Blue crane X: {self.blue_crane.x:.1f}mm")
+            print(f"  Red crane X:  {self.red_crane.x:.1f}mm")
+            print(f"  Distance:     {distance_between_cranes:.1f}mm")
+            print(f"  Safe dist:    {safe_distance:.1f}mm")
+            print(f"  Violation:    {safe_distance - distance_between_cranes:.1f}mm")
+            print(f"\nAttempting to fix by moving cranes to safe positions...")
+            print(f"{'!'*70}\n")
+
+            # Move both cranes to their home positions to separate them
+            self.blue_crane.x = config.BLUE_CRANE_HOME_X
+            self.blue_crane.y = config.BLUE_CRANE_HOME_Y
+            self.blue_crane.state = "WAIT"
+            self.blue_crane.action_timer = 0.0
+            self.blue_crane.has_diamond = False
+            self.blue_crane.diamond.set_visible(False)
+            self.blue_crane.update_position()
+
+            self.red_crane.x = config.RED_CRANE_HOME_X
+            self.red_crane.y = config.RED_CRANE_HOME_Y
+            self.red_crane.state = "WAIT"
+            self.red_crane.action_timer = 0.0
+            self.red_crane.has_diamond = False
+            self.red_crane.diamond.set_visible(False)
+            self.red_crane.update_position()
+
+            print("Cranes moved to safe home positions")
+            print(f"  Blue crane now at X={self.blue_crane.x:.1f}mm")
+            print(f"  Red crane now at X={self.red_crane.x:.1f}mm")
+            print(f"  New distance: {abs(self.blue_crane.x - self.red_crane.x):.1f}mm\n")
 
         # Update metrics
         self.update_metrics_display()
@@ -776,7 +844,11 @@ class SimulationController:
 
     def step_simulation(self, dt, skip_mode=False):
         """Execute one simulation time step"""
-        dt *= config.SIM_SPEED_MULTIPLIER  # speed
+        # CRITICAL: Don't apply speed multiplier during skip mode
+        # Speed multiplier is for visual playback speed only
+        # During skip, we need consistent physics timestep to prevent collisions
+        if not skip_mode:
+            dt *= config.SIM_SPEED_MULTIPLIER  # Only for normal animation
 
         # Check if simulation should start (blue crane starts picking up first diamond)
         if not self.simulation_started:
@@ -819,9 +891,16 @@ class SimulationController:
         if current_scanned > self.diamonds_scanned:
             self.diamonds_scanned = current_scanned
 
-        # Update time - only if simulation has started
-        if self.simulation_started:
+        # Update time
+        # CRITICAL FIX: Always advance time, even before simulation_started
+        # This is especially important during skip mode
+        if skip_mode:
+            # During skip, always advance time to reach target
             self.t_elapsed += dt
+        else:
+            # During normal animation, only advance time after simulation starts
+            if self.simulation_started:
+                self.t_elapsed += dt
 
         # Update metrics display (skip during fast-forward for performance)
         if not skip_mode:

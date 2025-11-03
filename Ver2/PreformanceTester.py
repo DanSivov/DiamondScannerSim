@@ -35,7 +35,7 @@ def run_simulation_headless(n_scanners, scan_time, loading_strategy, test_durati
         import matplotlib.pyplot as plt
         from TwoClawSim.Scanner import DScanner
         from TwoClawSim.endBox import Box
-        from TwoClawSim.Crane import BlueCrane, RedCrane, make_diamond
+        from TwoClawSim.crane import BlueCrane, RedCrane, make_diamond
         from matplotlib.patches import Circle, Rectangle
 
         # Setup simulation without display

@@ -13,7 +13,7 @@ from . import config
 from .config import (S_W_SCANNER, S_H_SCANNER, N_BOXES, FPS, DT,
                      VMAX_CLAW_X, T_Z, D_CLAW_SAFE_DISTANCE)
 from .endBox import Box
-from .Crane import BlueCrane, RedCrane, make_diamond
+from .crane import BlueCrane, RedCrane, make_diamond
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.widgets import Button, TextBox

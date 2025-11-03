@@ -4,22 +4,29 @@ from RealisticTwoClawSim import config
 from RealisticTwoClawSim.simulation import run_simulation
 
 def choose_mode():
-    """Popup to choose simulation speed mode"""
+    """Popup to choose simulation speed mode and side view option"""
     root = tk.Tk()
     root.title("Select Simulation Mode")
 
-    choice = {"mode": None}
+    choice = {"mode": None, "side_view": False}
 
     def set_mode(mode):
         choice["mode"] = mode
+        choice["side_view"] = side_view_var.get()
         root.destroy()
 
     tk.Label(root, text="Choose Simulation Speed Mode:", font=("Arial", 12)).pack(pady=10)
     tk.Button(root, text="Realistic Speed", width=20, command=lambda: set_mode("normal")).pack(pady=5)
     tk.Button(root, text="Recommended Speed", width=20, command=lambda: set_mode("debug")).pack(pady=5)
 
+    # Add side view checkbox
+    tk.Label(root, text="", font=("Arial", 2)).pack(pady=5)  # Spacer
+    side_view_var = tk.BooleanVar(value=True)  # Default to enabled
+    tk.Checkbutton(root, text="Enable Side View (shows vertical movement)",
+                   variable=side_view_var, font=("Arial", 10)).pack(pady=5)
+
     root.mainloop()
-    return choice["mode"]
+    return choice["mode"], choice["side_view"]
 
 def main():
     print("\n")
@@ -36,15 +43,21 @@ def main():
         print("Configuration displayed. Exiting.")
         return
 
-    # Ask user for mode
-    mode = choose_mode()
+    # Ask user for mode and side view option
+    mode, enable_side_view = choose_mode()
+    print(enable_side_view)
     if mode == "normal":
-        config.SIM_SPEED_MULTIPLIER = 2.0
+        if enable_side_view:
+            config.SIM_SPEED_MULTIPLIER = 3.0
+        else:
+            config.SIM_SPEED_MULTIPLIER = 2.0
     else:
-        config.SIM_SPEED_MULTIPLIER = 1.0  # ~3x slower for debugging
+        config.SIM_SPEED_MULTIPLIER = 1.0  # slower do to overhead, but no visual bugs
+
+    print(f"Side view: {'ENABLED' if enable_side_view else 'DISABLED'}")
 
     try:
-        run_simulation()
+        run_simulation(enable_side_view=enable_side_view)
     except KeyboardInterrupt:
         print("\n\nSimulation interrupted by user.")
         sys.exit(0)

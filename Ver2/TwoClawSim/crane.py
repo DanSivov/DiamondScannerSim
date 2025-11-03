@@ -1,4 +1,4 @@
-#Crane.py
+#crane.py
 import math
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, RegularPolygon

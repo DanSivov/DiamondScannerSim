@@ -112,8 +112,8 @@ class Crane:
         )
         ax.add_patch(self.crane_rect)
 
-        self.hoist, = ax.plot([], [], color=color, lw=2, zorder=4)
-        self.hoist.set_visible(False)
+        # No hoist visualization in top-down view
+        # Side view will handle vertical movement visualization
 
         # Diamond carried by this crane
         display_carry_y = config.mm_to_display(self.top_y)
@@ -135,23 +135,8 @@ class Crane:
         self.crane_rect.set_xy((display_x - display_width/2, display_y - display_height/2))
 
     def set_hoist(self, x, y, z_top, show):
-        """
-        Control hoist visibility and position
-
-        Args:
-            x: X position in mm
-            y: Y position in mm
-            z_top: Z position of crane hand in mm
-            show: Boolean to show/hide hoist
-        """
-        if show:
-            display_x = config.mm_to_display(x)
-            display_rail_y = config.mm_to_display(self.rail_y)
-            display_z_top = config.mm_to_display(z_top)
-            self.hoist.set_data([display_x, display_x], [display_rail_y, display_z_top])
-            self.hoist.set_visible(True)
-        else:
-            self.hoist.set_visible(False)
+        """Dummy method - hoist visualization removed from top-down view"""
+        pass
 
     def travel_time_2d(self, x0, y0, x1, y1):
         """
@@ -237,7 +222,6 @@ class Crane:
             del self._move_total_time
 
         self.update_position()
-        self.set_hoist(self.x, self.y, self.top_y, False)
         self.diamond.set_visible(False)
 
 

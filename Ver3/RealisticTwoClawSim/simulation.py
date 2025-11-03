@@ -54,6 +54,11 @@ class SimulationController:
             pass
 
         self.setup_axes()
+
+        # Initialize scanner rectangle lists (before drawing)
+        self.scanner_rects = []
+        self.side_scanner_rects = []
+
         self.draw_static_elements()
 
         # Create scanners, boxes, and cranes
@@ -199,6 +204,9 @@ class SimulationController:
         # Post-skip cleanup and validation
         print("Performing post-skip cleanup...")
         self.cleanup_after_skip()
+
+        # Update scanner colors to reflect current state
+        self.update_scanner_colors()
 
         # Restore pause state
         self.is_paused = was_paused
@@ -381,22 +389,25 @@ class SimulationController:
 
     def draw_scanners_outline(self):
         """Draw scanner outlines"""
+        self.scanner_rects = []  # Store for dynamic color updates
+
         for i, (x_mm, y_mm) in enumerate(config.get_scanner_positions()):
             x = config.mm_to_display(x_mm)
             y = config.mm_to_display(y_mm)
             w = config.mm_to_display(config.S_W_SCANNER)
             h = config.mm_to_display(config.S_H_SCANNER)
 
-            # Scanner body
+            # Scanner body - will change color based on state
             scanner = Rectangle(
                 (x - w/2, y - h/2), w, h,
-                facecolor=config.COLOR_SCANNER,
+                facecolor=self.get_scanner_color("empty"),  # Initial color
                 edgecolor='black',
                 linewidth=2,
-                alpha=0.5,
+                alpha=0.8,
                 zorder=2
             )
             self.ax.add_patch(scanner)
+            self.scanner_rects.append(scanner)
 
             # Drop zone circle
             drop_r = config.mm_to_display(config.SCANNER_DROP_RADIUS)
@@ -405,11 +416,8 @@ class SimulationController:
                                linewidth=1.5, zorder=3)
             self.ax.add_patch(drop_zone)
 
-            # Label
-            label = f"Scanner {i+1}"
-            self.ax.text(x, y - h/2 - config.mm_to_display(8),
-                         label, ha='center', va='top',
-                         fontsize=10, fontweight='bold')
+            # Label (removed - color shows state now)
+            # We'll add a legend instead
 
     def draw_pickup_zone(self):
         """Draw pickup zone"""
@@ -493,6 +501,29 @@ class SimulationController:
         self.blue_crane = BlueCrane(self.ax, self.scanner_list)
         self.red_crane = RedCrane(self.ax, self.scanner_list, self.box_list)
 
+    def get_scanner_color(self, state):
+        """Get color for scanner based on its state"""
+        if state == "empty":
+            return '#00CED1'  # Cyan - idle/empty
+        elif state == "scanning":
+            return '#FFA500'  # Orange - actively scanning
+        elif state == "ready":
+            return '#00FF00'  # Green - ready for pickup
+        else:
+            return '#00CED1'  # Default cyan
+
+    def update_scanner_colors(self):
+        """Update scanner colors based on current state"""
+        for i, scanner in enumerate(self.scanner_list):
+            if i < len(self.scanner_rects):
+                color = self.get_scanner_color(scanner.state)
+                self.scanner_rects[i].set_facecolor(color)
+
+            # Also update side view if enabled
+            if self.enable_side_view and i < len(self.side_scanner_rects):
+                color = self.get_scanner_color(scanner.state)
+                self.side_scanner_rects[i].set_facecolor(color)
+
     def setup_side_view_static(self):
         """Setup static elements for side view (rail, scanners, boxes)"""
         if self.ax_side is None:
@@ -513,7 +544,9 @@ class SimulationController:
         scanner_platform_height = config.RAIL_Y - config.D_Z
         y_scanner = config.mm_to_display(scanner_platform_height)
 
-        # Draw scanners
+        # Draw scanners - store rectangles for color updates
+        self.side_scanner_rects = []
+
         for i, scanner in enumerate(self.scanner_list):
             scanner_x = scanner.x_pos
             x_display = config.mm_to_display(scanner_x)
@@ -521,29 +554,24 @@ class SimulationController:
             width = config.mm_to_display(config.S_W_SCANNER)
             height = config.mm_to_display(config.S_H_SCANNER)
 
-            # Scanner box
+            # Scanner box - will change color based on state
             scanner_rect = Rectangle(
                 (x_display - width/2, y_scanner - height/2),
                 width, height,
-                facecolor=config.COLOR_SCANNER,
+                facecolor=self.get_scanner_color("empty"),  # Initial color
                 edgecolor='black',
                 linewidth=2.5,
                 alpha=0.8,
                 zorder=2
             )
             self.ax_side.add_patch(scanner_rect)
+            self.side_scanner_rects.append(scanner_rect)
 
             # Drop zone line
             drop_y = y_scanner + height/2
             self.ax_side.plot([x_display - width/2, x_display + width/2],
                               [drop_y, drop_y],
                               'r-', linewidth=3, zorder=3, alpha=0.9)
-
-            # Label
-            self.ax_side.text(x_display, y_scanner - height/2 - config.mm_to_display(15),
-                              f"Scanner {i+1}",
-                              ha='center', va='top', fontsize=10, fontweight='bold',
-                              bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
 
         # Draw end boxes (first row only)
         box_positions = config.get_end_box_positions()
@@ -757,18 +785,34 @@ class SimulationController:
         return hand_z
 
     def create_metrics_display(self):
-        """Create text elements for displaying metrics"""
-        # Position at top left of axes
-        self.time_text = self.ax.text(
-            0.02, 0.98, '', transform=self.ax.transAxes,
+        """Create text elements for displaying metrics above the plots"""
+        # Use figure coordinates to place text above the subplots
+        # Time display - top left
+        self.time_text = self.fig.text(
+            0.02, 0.98, '',
             fontsize=11, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8)
         )
 
-        self.metrics_text = self.ax.text(
-            0.02, 0.88, '', transform=self.ax.transAxes,
+        # Metrics display - top center-left
+        self.metrics_text = self.fig.text(
+            0.25, 0.98, '',
             fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8)
+        )
+
+        # Scanner state legend - top right
+        legend_text = (
+            "Scanner States:\n"
+            "● Cyan - Empty/Idle\n"
+            "● Orange - Scanning\n"
+            "● Green - Ready\n"
+        )
+        self.legend_text = self.fig.text(
+            0.98, 0.98, legend_text,
+            fontsize=9, verticalalignment='top', horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black', linewidth=1.5),
+            family='monospace'
         )
 
     def update_metrics_display(self):
@@ -905,6 +949,7 @@ class SimulationController:
         # Update metrics display (skip during fast-forward for performance)
         if not skip_mode:
             self.update_metrics_display()
+            self.update_scanner_colors()  # Update scanner colors based on state
 
         # Update side view if enabled (skip during fast-forward for performance)
         if self.enable_side_view and not skip_mode:

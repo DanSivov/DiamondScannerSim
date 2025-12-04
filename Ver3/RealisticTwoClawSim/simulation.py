@@ -279,7 +279,8 @@ class SimulationController:
             # If crane is in a movement state but has no timer, fix it
             if crane.state in ["MOVE_TO_SCANNER", "MOVE_TO_BOX", "RETURN_HOME",
                                "MOVE_TO_START", "RETURN_TO_START", "MOVE_OUT_OF_WAY_AFTER_RIGHT_PICKUP",
-                               "MOVE_OUT_OF_WAY_AFTER_RIGHT_LOAD", "MOVE_TO_BOX_THEN_RIGHT_SCANNER"]:
+                               "MOVE_OUT_OF_WAY_AFTER_RIGHT_LOAD", "MOVE_TO_BOX_THEN_RIGHT_SCANNER",
+                               "MOVE_TO_HOME_EMPTY"]:
                 if crane.action_timer <= 0:
                     # Timer expired but state not updated - force to WAIT
                     print(f"Warning: {crane.color} crane in movement state with no timer, forcing to WAIT")
@@ -293,6 +294,49 @@ class SimulationController:
                 if crane.drop_phase is not None:
                     crane.drop_phase = None
 
+            # CRITICAL: Validate crane position matches its state
+            # This prevents cranes from being in wrong locations after skip
+            if crane.state == "WAIT":
+                # WAIT state should be at home position
+                expected_x = crane.initial_x
+                expected_y = crane.initial_y
+                distance = abs(crane.x - expected_x) + abs(crane.y - expected_y)
+                if distance > 50:  # More than 50mm away from expected position
+                    print(f"Warning: {crane.color} crane in WAIT but not at home (at {crane.x:.1f}, {crane.y:.1f}, expected {expected_x:.1f}, {expected_y:.1f})")
+                    # Don't force move - might be valid intermediate state
+
+            elif crane.state in ["PICK_AT_START", "DROP_AT_SCANNER", "PICK_AT_SCANNER",
+                                 "DROP_AT_BOX", "DROP_AT_BOX_THEN_RIGHT_SCANNER", "LOWER_FOR_PICKUP"]:
+                # These states should have a target position
+                # Validate that crane is approximately at the target
+                if crane.state == "PICK_AT_START":
+                    pickup_x, pickup_y = config.get_pickup_position()
+                    expected_x, expected_y = pickup_x, pickup_y
+                elif crane.state in ["DROP_AT_SCANNER", "PICK_AT_SCANNER", "LOWER_FOR_PICKUP"]:
+                    if crane.target_i is not None and crane.target_i < len(crane.scanner_list):
+                        expected_x, expected_y = crane.scanner_list[crane.target_i].get_drop_zone_position()
+                    else:
+                        continue  # Can't validate without target
+                elif crane.state in ["DROP_AT_BOX", "DROP_AT_BOX_THEN_RIGHT_SCANNER"]:
+                    if hasattr(crane, 'target_box') and crane.target_box is not None and crane.target_box < len(crane.box_list):
+                        expected_x, expected_y = crane.box_list[crane.target_box].get_position()
+                    else:
+                        continue  # Can't validate without target
+                else:
+                    continue
+
+                distance = abs(crane.x - expected_x) + abs(crane.y - expected_y)
+                if distance > 50:  # More than 50mm away
+                    print(f"Warning: {crane.color} crane in {crane.state} but not at target position")
+                    print(f"  Current: ({crane.x:.1f}, {crane.y:.1f})")
+                    print(f"  Expected: ({expected_x:.1f}, {expected_y:.1f})")
+                    print(f"  Distance: {distance:.1f}mm")
+                    # Move crane to expected position
+                    crane.x = expected_x
+                    crane.y = expected_y
+                    crane.update_position()
+                    print(f"  Corrected position")
+
         # CRITICAL: Check for collision violations
         distance_between_cranes = abs(self.blue_crane.x - self.red_crane.x)
         safe_distance = config.D_CLAW_SAFE_DISTANCE
@@ -300,32 +344,58 @@ class SimulationController:
         if distance_between_cranes < safe_distance:
             print(f"\n{'!'*70}")
             print(f"ERROR: Collision violation detected after skip!")
-            print(f"  Blue crane X: {self.blue_crane.x:.1f}mm")
-            print(f"  Red crane X:  {self.red_crane.x:.1f}mm")
+            print(f"  Blue crane X: {self.blue_crane.x:.1f}mm, State: {self.blue_crane.state}")
+            print(f"  Red crane X:  {self.red_crane.x:.1f}mm, State: {self.red_crane.state}")
             print(f"  Distance:     {distance_between_cranes:.1f}mm")
             print(f"  Safe dist:    {safe_distance:.1f}mm")
             print(f"  Violation:    {safe_distance - distance_between_cranes:.1f}mm")
             print(f"\nAttempting to fix by moving cranes to safe positions...")
             print(f"{'!'*70}\n")
 
-            # Move both cranes to their home positions to separate them
-            self.blue_crane.x = config.BLUE_CRANE_HOME_X
-            self.blue_crane.y = config.BLUE_CRANE_HOME_Y
-            self.blue_crane.state = "WAIT"
-            self.blue_crane.action_timer = 0.0
-            self.blue_crane.has_diamond = False
-            self.blue_crane.diamond.set_visible(False)
-            self.blue_crane.update_position()
+            # Determine which crane to move based on state
+            # If one is in a critical state (picking/dropping), move the other one
+            blue_critical = self.blue_crane.state in ["PICK_AT_START", "DROP_AT_SCANNER", "PICK_AT_SCANNER"]
+            red_critical = self.red_crane.state in ["PICK_AT_SCANNER", "DROP_AT_BOX", "LOWER_FOR_PICKUP"]
 
-            self.red_crane.x = config.RED_CRANE_HOME_X
-            self.red_crane.y = config.RED_CRANE_HOME_Y
-            self.red_crane.state = "WAIT"
-            self.red_crane.action_timer = 0.0
-            self.red_crane.has_diamond = False
-            self.red_crane.diamond.set_visible(False)
-            self.red_crane.update_position()
+            if blue_critical and not red_critical:
+                # Move red crane to home
+                self.red_crane.x = config.RED_CRANE_HOME_X
+                self.red_crane.y = config.RED_CRANE_HOME_Y
+                self.red_crane.state = "WAIT"
+                self.red_crane.action_timer = 0.0
+                self.red_crane.has_diamond = False
+                self.red_crane.diamond.set_visible(False)
+                self.red_crane.update_position()
+                print(f"Moved red crane to home")
+            elif red_critical and not blue_critical:
+                # Move blue crane to home
+                self.blue_crane.x = config.BLUE_CRANE_HOME_X
+                self.blue_crane.y = config.BLUE_CRANE_HOME_Y
+                self.blue_crane.state = "WAIT"
+                self.blue_crane.action_timer = 0.0
+                self.blue_crane.has_diamond = False
+                self.blue_crane.diamond.set_visible(False)
+                self.blue_crane.update_position()
+                print(f"Moved blue crane to home")
+            else:
+                # Both or neither critical - move both to home
+                self.blue_crane.x = config.BLUE_CRANE_HOME_X
+                self.blue_crane.y = config.BLUE_CRANE_HOME_Y
+                self.blue_crane.state = "WAIT"
+                self.blue_crane.action_timer = 0.0
+                self.blue_crane.has_diamond = False
+                self.blue_crane.diamond.set_visible(False)
+                self.blue_crane.update_position()
 
-            print("Cranes moved to safe home positions")
+                self.red_crane.x = config.RED_CRANE_HOME_X
+                self.red_crane.y = config.RED_CRANE_HOME_Y
+                self.red_crane.state = "WAIT"
+                self.red_crane.action_timer = 0.0
+                self.red_crane.has_diamond = False
+                self.red_crane.diamond.set_visible(False)
+                self.red_crane.update_position()
+                print(f"Moved both cranes to home positions")
+
             print(f"  Blue crane now at X={self.blue_crane.x:.1f}mm")
             print(f"  Red crane now at X={self.red_crane.x:.1f}mm")
             print(f"  New distance: {abs(self.blue_crane.x - self.red_crane.x):.1f}mm\n")
@@ -504,11 +574,13 @@ class SimulationController:
     def get_scanner_color(self, state):
         """Get color for scanner based on its state"""
         if state == "empty":
-            return '#D3D3D3'  # Cyan - idle/empty
+            return '#00CED1'  # Cyan - idle/empty
         elif state == "scanning":
             return '#FFA500'  # Orange - actively scanning
         elif state == "ready":
             return '#00FF00'  # Green - ready for pickup
+        elif state == "occupied":
+            return '#FFFF00'  # Yellow - has diamond being scanned
         else:
             return '#00CED1'  # Default cyan
 
@@ -807,6 +879,7 @@ class SimulationController:
             "● Cyan - Empty/Idle\n"
             "● Orange - Scanning\n"
             "● Green - Ready\n"
+            "● Yellow - Occupied"
         )
         self.legend_text = self.fig.text(
             0.98, 0.98, legend_text,

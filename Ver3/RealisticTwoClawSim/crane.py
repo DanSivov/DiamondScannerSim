@@ -134,6 +134,102 @@ class Crane:
 
         self.crane_rect.set_xy((display_x - display_width/2, display_y - display_height/2))
 
+    def update_rendering(self, other_crane):
+        """
+        Update visual rendering to prevent cranes from appearing to overlap
+
+        Strategy:
+        1. Adjust zorder so moving crane renders in front
+        2. Add slight Y-offset when cranes are close for visual separation
+
+        Args:
+            other_crane: The other crane to check position against
+        """
+        # Calculate distance
+        distance = abs(self.x - other_crane.x)
+
+        # Base zorder for cranes
+        base_zorder = 5
+
+        # Determine which crane should render in front based on state priority
+        movement_states = [
+            "MOVE_TO_SCANNER", "MOVE_TO_BOX", "RETURN_HOME",
+            "MOVE_TO_START", "RETURN_TO_START", "RETURN_TO_HOME_WITH_DIAMOND",
+            "MOVE_OUT_OF_WAY_AFTER_RIGHT_PICKUP", "MOVE_OUT_OF_WAY_AFTER_RIGHT_LOAD",
+            "MOVE_TO_BOX_THEN_RIGHT_SCANNER", "MOVE_TO_HOME_EMPTY"
+        ]
+
+        # Check if cranes are close enough to need visual adjustment
+        if distance < self.safe_distance * 1.5:  # Within 1.5x safe distance
+            # Determine rendering priority
+            self_moving = self.state in movement_states
+            other_moving = other_crane.state in movement_states
+
+            # Rendering priority rules:
+            # 1. Moving crane in front of stationary crane
+            # 2. If both moving or both stationary: use crane priority
+            # 3. Crane with priority renders in front
+
+            if self_moving and not other_moving:
+                # This crane is moving, render in front
+                my_zorder = base_zorder + 2
+                other_zorder = base_zorder
+            elif other_moving and not self_moving:
+                # Other crane is moving, render in back
+                my_zorder = base_zorder
+                other_zorder = base_zorder + 2
+            else:
+                # Both moving or both stationary - use priority system
+                if self.has_priority_over(other_crane):
+                    my_zorder = base_zorder + 2
+                    other_zorder = base_zorder
+                else:
+                    my_zorder = base_zorder
+                    other_zorder = base_zorder + 2
+
+            # Update zorder
+            self.crane_rect.set_zorder(my_zorder)
+            other_crane.crane_rect.set_zorder(other_zorder)
+
+            # Add visual Y-offset for additional separation when very close
+            if distance < self.safe_distance:
+                # Apply small Y offset based on X position
+                # Crane on left gets slight downward offset, crane on right gets upward offset
+                if self.x < other_crane.x:
+                    # This crane is on left - shift down slightly
+                    y_offset = -3  # Small offset in mm
+                    other_y_offset = 3
+                else:
+                    # This crane is on right - shift up slightly
+                    y_offset = 3
+                    other_y_offset = -3
+
+                # Apply offset to visual position
+                display_x = config.mm_to_display(self.x)
+                display_y = config.mm_to_display(self.y + y_offset)
+                display_width = config.mm_to_display(self.crane_width)
+                display_height = config.mm_to_display(self.crane_height)
+                self.crane_rect.set_xy((display_x - display_width/2, display_y - display_height/2))
+
+                # Apply offset to other crane
+                other_display_x = config.mm_to_display(other_crane.x)
+                other_display_y = config.mm_to_display(other_crane.y + other_y_offset)
+                other_display_width = config.mm_to_display(other_crane.crane_width)
+                other_display_height = config.mm_to_display(other_crane.crane_height)
+                other_crane.crane_rect.set_xy((other_display_x - other_display_width/2,
+                                               other_display_y - other_display_height/2))
+        else:
+            # Cranes far apart - reset to normal rendering
+            self.crane_rect.set_zorder(base_zorder)
+            other_crane.crane_rect.set_zorder(base_zorder)
+
+            # Reset positions (remove any Y-offset)
+            display_x = config.mm_to_display(self.x)
+            display_y = config.mm_to_display(self.y)
+            display_width = config.mm_to_display(self.crane_width)
+            display_height = config.mm_to_display(self.crane_height)
+            self.crane_rect.set_xy((display_x - display_width/2, display_y - display_height/2))
+
     def set_hoist(self, x, y, z_top, show):
         """Dummy method - hoist visualization removed from top-down view"""
         pass
@@ -164,7 +260,17 @@ class Crane:
         # Only check X-axis distance since they're both on the same rail
         distance_x = abs(self.x - other_crane.x)
 
-        return distance_x < safe_distance
+        collision = distance_x < safe_distance
+
+        # DIAGNOSTIC: Log collision checks
+        if collision:
+            print(f"⚠️  COLLISION DETECTED:")
+            print(f"   {self.color} crane at X={self.x:.1f}mm, state={self.state}, has_diamond={self.has_diamond}")
+            print(f"   {other_crane.color} crane at X={other_crane.x:.1f}mm, state={other_crane.state}, has_diamond={other_crane.has_diamond}")
+            print(f"   Distance: {distance_x:.1f}mm < {safe_distance:.1f}mm (COLLISION)")
+            print(f"   Time: {getattr(self, 't_elapsed', 0):.2f}s")
+
+        return collision
 
     def is_left_of(self, other_crane):
         """Check if this crane is to the left of another crane"""
@@ -197,6 +303,106 @@ class Crane:
         dx = self.x - x
         dy = self.y - y
         return math.sqrt(dx**2 + dy**2)
+
+    def is_in_deadlock_with(self, other_crane):
+        """
+        Check if both cranes are in a deadlock situation
+        Deadlock occurs when both cranes are:
+        1. Too close to each other (collision)
+        2. Both trying to move (in movement states)
+        3. NOT when one crane is actively working (picking/dropping/loading)
+
+        Returns: Boolean
+        """
+        # Check if we're too close
+        if not self.would_collide_with(other_crane):
+            return False
+
+        # Check if both cranes are in movement states
+        movement_states = [
+            "MOVE_TO_SCANNER", "MOVE_TO_BOX", "RETURN_HOME",
+            "MOVE_TO_START", "RETURN_TO_START", "RETURN_TO_HOME_WITH_DIAMOND",
+            "MOVE_OUT_OF_WAY_AFTER_RIGHT_PICKUP", "MOVE_OUT_OF_WAY_AFTER_RIGHT_LOAD",
+            "MOVE_TO_BOX_THEN_RIGHT_SCANNER", "MOVE_TO_HOME_EMPTY"
+        ]
+
+        both_moving = (self.state in movement_states and other_crane.state in movement_states)
+
+        if not both_moving:
+            return False
+
+        # CRITICAL: If blue crane is actively working (loading diamonds),
+        # this is NOT a deadlock - red crane must always yield
+        if other_crane.color == '#1f77b4':  # Blue crane
+            blue_working_states = [
+                "PICK_AT_START",              # Blue picking up diamond
+                "DROP_AT_SCANNER",            # Blue loading scanner
+                "MOVE_TO_SCANNER",            # Blue going to load
+                "RETURN_TO_START",            # Blue returning after loading
+                "RETURN_TO_HOME_WITH_DIAMOND" # Blue returning home with diamond
+            ]
+            if other_crane.state in blue_working_states:
+                return False  # Not a deadlock, red must yield
+
+        return both_moving
+
+    def has_priority_over(self, other_crane):
+        """
+        Determine if this crane has priority over another crane in a deadlock
+
+        Priority rules:
+        1. Crane WITHOUT diamond has priority over crane WITH diamond
+        2. If both have diamonds OR both don't have diamonds: Blue crane has priority
+
+        Returns: Boolean (True if this crane has priority)
+        """
+        # Rule 1: Check diamond status
+        if self.has_diamond and not other_crane.has_diamond:
+            # Other crane has priority (doesn't have diamond)
+            return False
+        elif not self.has_diamond and other_crane.has_diamond:
+            # This crane has priority (doesn't have diamond)
+            return True
+
+        # Rule 2: Both have same diamond status - blue crane has priority
+        # Blue crane color is '#1f77b4', Red crane color is '#d62728'
+        if self.color == '#1f77b4':  # Blue crane
+            return True
+        else:  # Red crane
+            return False
+
+    def should_yield_to(self, other_crane):
+        """
+        Check if this crane should yield to another crane
+        Used for collision avoidance with priority system
+
+        Returns: Boolean (True if this crane should wait)
+        """
+        # First check if we're in a deadlock situation
+        in_deadlock = self.is_in_deadlock_with(other_crane)
+
+        if not in_deadlock:
+            # Not in deadlock - use simple collision check
+            # Both cranes wait for each other equally
+            result = self.would_collide_with(other_crane)
+            if result:
+                print(f"🚦 {self.color} crane YIELDING (simple collision):")
+                print(f"   Not a deadlock, just too close")
+            return result
+
+        # In deadlock - use priority system
+        # Should yield if OTHER crane has priority
+        has_priority = self.has_priority_over(other_crane)
+        should_yield = not has_priority
+
+        if should_yield:
+            print(f"🚦 {self.color} crane YIELDING (priority system):")
+            print(f"   In deadlock, {other_crane.color} has priority")
+        else:
+            print(f"🚦 {self.color} crane HAS PRIORITY:")
+            print(f"   In deadlock, this crane proceeds")
+
+        return should_yield
 
     def reset(self):
         """Reset crane to initial state"""
@@ -380,9 +586,17 @@ class BlueCrane(Crane):
 
         elif self.state == "MOVE_TO_START":
             # Move crane to START position to pick up diamond
-            # Check for collision with red crane
-            if self.would_collide_with(red_crane):
-                # Too close to red crane - stop and wait
+            # Check for collision with red crane - use priority system
+            if self.should_yield_to(red_crane):
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                pickup_x, pickup_y = config.get_pickup_position()
+                self.action_timer = self.travel_time_2d(self.x, self.y, pickup_x, pickup_y)
                 return
 
             if self.action_timer > 0:
@@ -494,10 +708,17 @@ class BlueCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, pickup_x, pickup_y)
                 return
 
-            # Check for collision with red crane during movement
-            if self.would_collide_with(red_crane):
-                # Too close to red crane - stop and wait
-                # Don't move this frame
+            # Check for collision with red crane - use priority system
+            if self.should_yield_to(red_crane):
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                target_x, target_y = self.scanner_list[self.target_i].get_drop_zone_position()
+                self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
                 return
 
             if self.action_timer > 0:
@@ -573,6 +794,11 @@ class BlueCrane(Crane):
                     if self.target_i is not None:
                         self.scanners_loaded.add(self.target_i)
 
+                    print(f"🔵 BLUE crane finished DROP_AT_SCANNER")
+                    print(f"   Position: X={self.x:.1f}, Y={self.y:.1f}")
+                    print(f"   Has diamond: {self.has_diamond}")
+                    print(f"   About to transition to RETURN_TO_START")
+
                     # Check if we just loaded the right scanner while red crane is waiting
                     if (self.target_i == 1 and
                             red_crane.state == "WAIT_FOR_BLUE_TO_LOAD_RIGHT"):
@@ -582,18 +808,32 @@ class BlueCrane(Crane):
                         self.action_timer = self.travel_time_2d(self.x, self.y, pickup_x, pickup_y)
                         # Set flag so we know to move out of way after picking up diamond
                         self.waiting_for_red_to_clear = True
+                        print(f"   → Transitioning to RETURN_TO_START (special: red waiting)")
                         return
 
                     # Always return to start for next diamond
                     self.state = "RETURN_TO_START"
                     pickup_x, pickup_y = config.get_pickup_position()
                     self.action_timer = self.travel_time_2d(self.x, self.y, pickup_x, pickup_y)
+                    print(f"   → Transitioned to RETURN_TO_START")
+                    print(f"   → Timer set to {self.action_timer:.2f}s")
+                    print(f"   → Current position AFTER transition: X={self.x:.1f}, Y={self.y:.1f}")
+                    print(f"   → Red crane position: X={red_crane.x:.1f}, Y={red_crane.y:.1f}, State={red_crane.state}")
+                    print(f"   → Distance to red: {abs(self.x - red_crane.x):.1f}mm")
 
         elif self.state == "RETURN_TO_START":
             # Move crane back to pickup zone
-            # Check for collision with red crane
-            if self.would_collide_with(red_crane):
-                # Too close to red crane - stop and wait
+            # Check for collision with red crane - use priority system
+            if self.should_yield_to(red_crane):
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                pickup_x, pickup_y = config.get_pickup_position()
+                self.action_timer = self.travel_time_2d(self.x, self.y, pickup_x, pickup_y)
                 return
 
             if self.action_timer > 0:
@@ -604,13 +844,22 @@ class BlueCrane(Crane):
                     self._move_start_x = self.x
                     self._move_start_y = self.y
                     self._move_total_time = self.action_timer + dt
+                    print(f"🔵 BLUE crane starting RETURN_TO_START movement")
+                    print(f"   From: ({self.x:.1f}, {self.y:.1f}) To: ({pickup_x:.1f}, {pickup_y:.1f})")
+                    print(f"   Total time: {self._move_total_time:.2f}s")
 
                 # Calculate progress (0 to 1)
                 progress = 1.0 - (self.action_timer / self._move_total_time)
 
+                old_x = self.x
                 # Interpolate position
                 self.x = self._move_start_x + (pickup_x - self._move_start_x) * progress
                 self.y = self._move_start_y + (pickup_y - self._move_start_y) * progress
+
+                # Log significant movement
+                if abs(old_x - self.x) > 10:  # Moved more than 10mm
+                    print(f"🔵 BLUE crane RETURN_TO_START: X={old_x:.1f} → {self.x:.1f} (progress={progress*100:.1f}%)")
+
                 self.update_position()
             else:
                 # Arrived at start
@@ -663,9 +912,16 @@ class BlueCrane(Crane):
 
         elif self.state == "RETURN_TO_HOME_WITH_DIAMOND":
             # Move crane back to home position (left side) while carrying diamond
-            # Check for collision with red crane during movement
-            if self.would_collide_with(red_crane):
-                # Too close to red crane - stop and wait
+            # Check for collision with red crane - use priority system
+            if self.should_yield_to(red_crane):
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
             if self.action_timer > 0:
@@ -856,19 +1112,33 @@ class RedCrane(Crane):
 
                     # If it's time to depart for this scanner
                     if current_time >= self.departure_times[i]:
-                        # Check path/collision using the exact drop-zone x that we'll approach
-                        if self.can_move_to_x(scanner_x, blue_crane):
-                            # Commit the run
-                            self.target_i = i
-                            self.target_box = scanner.get_target_box()
-                            self.state = "MOVE_TO_SCANNER"
-                            self.action_timer = travel_time
-                            # Clear stored prediction
-                            self.departure_times.pop(i, None)
-                            # Track if this is the right scanner
-                            self.from_rightmost = (i == 1)
-                            break
-                        # else: leave departure_times[i] and wait for path to clear
+                        # STRICT CHECK: Don't depart if blue crane is anywhere near the path
+                        if self.would_collide_with(blue_crane):
+                            # Currently too close to blue crane - wait
+                            print(f"🔴 RED crane WAIT: Can't depart (collision with blue)")
+                            print(f"   Red X={self.x:.1f}, Blue X={blue_crane.x:.1f}")
+                            continue
+
+                        if not self.can_move_to_x(scanner_x, blue_crane):
+                            # Destination would be too close to blue crane - wait
+                            print(f"🔴 RED crane WAIT: Can't depart (destination unsafe)")
+                            print(f"   Target X={scanner_x:.1f}, Blue X={blue_crane.x:.1f}")
+                            continue
+
+                        # Both checks passed - safe to depart
+                        print(f"🔴 RED crane WAIT: DEPARTING to scanner {i}")
+                        print(f"   Red X={self.x:.1f}, Blue X={blue_crane.x:.1f}")
+                        print(f"   Blue state={blue_crane.state}, Blue has_diamond={blue_crane.has_diamond}")
+                        print(f"   Target scanner X={scanner_x:.1f}")
+                        self.target_i = i
+                        self.target_box = scanner.get_target_box()
+                        self.state = "MOVE_TO_SCANNER"
+                        self.action_timer = travel_time
+                        # Clear stored prediction
+                        self.departure_times.pop(i, None)
+                        # Track if this is the right scanner
+                        self.from_rightmost = (i == 1)
+                        break
 
             # Fallback: if no scheduled run and a scanner is already ready
             if self.target_i is None:
@@ -877,7 +1147,16 @@ class RedCrane(Crane):
                     target_i = self.nearest_ready_scanner()
                     if target_i is not None:
                         target_x, target_y = self.scanner_list[target_i].get_drop_zone_position()
-                        if self.can_move_to_x(target_x, blue_crane):
+
+                        # STRICT CHECK: Don't depart if blue crane is anywhere near
+                        if self.would_collide_with(blue_crane):
+                            # Currently too close - don't move
+                            pass
+                        elif not self.can_move_to_x(target_x, blue_crane):
+                            # Destination would be too close - don't move
+                            pass
+                        else:
+                            # Safe to depart
                             self.target_i = target_i
                             self.target_box = self.scanner_list[target_i].get_target_box()
                             self.state = "MOVE_TO_SCANNER"
@@ -892,9 +1171,26 @@ class RedCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
-            # Collision with blue crane blocks movement this frame
-            if self.would_collide_with(blue_crane):
+            # Collision with blue crane - use priority system
+            if self.should_yield_to(blue_crane):
+                print(f"🛑 RED crane MOVE_TO_SCANNER blocked by blue crane")
+                print(f"   Red X={self.x:.1f}, Blue X={blue_crane.x:.1f}, Distance={abs(self.x - blue_crane.x):.1f}mm")
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                target_x, target_y = self.scanner_list[self.target_i].get_drop_zone_position()
+                self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
                 return
+            else:
+                # Log when red crane is allowed to proceed
+                if abs(self.x - blue_crane.x) < 150:  # Log if within 150mm
+                    print(f"✅ RED crane MOVE_TO_SCANNER proceeding (not yielding)")
+                    print(f"   Red X={self.x:.1f}, Blue X={blue_crane.x:.1f}, Distance={abs(self.x - blue_crane.x):.1f}mm")
+                    print(f"   Blue state={blue_crane.state}, Blue has_diamond={blue_crane.has_diamond}")
 
             if self.action_timer > 0:
                 target_x, target_y = self.scanner_list[self.target_i].get_drop_zone_position()
@@ -988,6 +1284,41 @@ class RedCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
+            # SPECIAL CASE: If we're here with no timer and no phase, we finished picking
+            # but couldn't move because blue crane was blocking. Retry the transition.
+            if self.action_timer <= 0 and self.pick_phase is None:
+                if self.target_box is None:
+                    self.target_box = 0
+
+                # From left scanner - check if should go to right scanner or to box
+                if not self.from_rightmost:
+                    if len(self.scanner_list) > 1:
+                        right_scanner = self.scanner_list[1]
+                        if right_scanner.state in ("ready", "scanning"):
+                            target_x, target_y = right_scanner.get_drop_zone_position()
+
+                            if not self.would_collide_with(blue_crane) and self.can_move_to_x(target_x, blue_crane):
+                                # Now safe to go to right scanner
+                                self.target_i = 1
+                                self.target_box = right_scanner.get_target_box()
+                                self.state = "MOVE_TO_BOX_THEN_RIGHT_SCANNER"
+                                box_x, box_y = self.box_list[self.target_box].get_position()
+                                self.action_timer = self.travel_time_2d(self.x, self.y, box_x, box_y)
+                                return
+
+                # Try to go to box
+                if self.target_box is not None and self.target_box < len(self.box_list):
+                    target_x, target_y = self.box_list[self.target_box].get_position()
+
+                    if not self.would_collide_with(blue_crane):
+                        # Now safe to go to box
+                        self.state = "MOVE_TO_BOX"
+                        self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                        return
+
+                # Still blocked - just wait here (will retry next frame)
+                return
+
             if self.pick_phase == "LOWER":
                 prog = 1.0 - (self.action_timer / self.lower_time)
                 z = self.rail_y - (self.rail_y - self.top_y) * prog
@@ -1043,25 +1374,42 @@ class RedCrane(Crane):
                             _, rightmost_scanner_y = self.scanner_list[1].get_drop_zone_position()
                             self.action_timer = self.travel_time_2d(self.x, self.y, fixed_waiting_x, rightmost_scanner_y)
                     else:
-                        # From left scanner - go directly to right scanner (not home)
-                        # Check if right scanner has a diamond ready
+                        # From left scanner - check if should go to right scanner or to box
+                        # STRICT CHECK: Only proceed if blue crane is not in the way
                         if len(self.scanner_list) > 1:
                             right_scanner = self.scanner_list[1]
                             if right_scanner.state in ("ready", "scanning"):
-                                # Go to right scanner next
+                                # Check if blue crane blocks the path
                                 target_x, target_y = right_scanner.get_drop_zone_position()
-                                self.target_i = 1
-                                self.target_box = right_scanner.get_target_box()
-                                self.state = "MOVE_TO_BOX_THEN_RIGHT_SCANNER"
-                                # First go to box to drop current diamond
-                                box_x, box_y = self.box_list[self.target_box].get_position()
-                                self.action_timer = self.travel_time_2d(self.x, self.y, box_x, box_y)
-                                return
+
+                                # CRITICAL: Check collision before committing to movement
+                                if not self.would_collide_with(blue_crane) and self.can_move_to_x(target_x, blue_crane):
+                                    # Safe to go to right scanner
+                                    self.target_i = 1
+                                    self.target_box = right_scanner.get_target_box()
+                                    self.state = "MOVE_TO_BOX_THEN_RIGHT_SCANNER"
+                                    # First go to box to drop current diamond
+                                    box_x, box_y = self.box_list[self.target_box].get_position()
+                                    self.action_timer = self.travel_time_2d(self.x, self.y, box_x, box_y)
+                                    return
 
                         # Default behavior: go to box
-                        target_x, target_y = self.box_list[self.target_box].get_position()
-                        self.state = "MOVE_TO_BOX"
-                        self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                        # STRICT CHECK: Ensure path to box is clear
+                        if self.target_box is not None and self.target_box < len(self.box_list):
+                            target_x, target_y = self.box_list[self.target_box].get_position()
+
+                            # Check collision before going to box
+                            if not self.would_collide_with(blue_crane):
+                                self.state = "MOVE_TO_BOX"
+                                self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                            else:
+                                # Blue crane in the way - stay here and check next frame
+                                # Don't transition to movement state yet
+                                pass
+                        else:
+                            # No valid box - return home
+                            self.state = "RETURN_HOME"
+                            self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
 
         elif self.state == "MOVE_OUT_OF_WAY_AFTER_RIGHT_PICKUP":
             # Red crane moves to FIXED waiting position - X is hard-coded, Y adapts to target box
@@ -1153,7 +1501,16 @@ class RedCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
-            if self.would_collide_with(blue_crane):
+            if self.should_yield_to(blue_crane):
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                target_x, target_y = self.box_list[self.target_box].get_position()
+                self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
                 return
 
             if self.action_timer > 0:
@@ -1190,6 +1547,34 @@ class RedCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
+            # SPECIAL CASE: If we're here with no timer and no phase, we finished dropping
+            # but couldn't move because blue crane was blocking. Retry the transition.
+            if self.action_timer <= 0 and self.drop_phase is None:
+                if len(self.scanner_list) > 1:
+                    target_x, target_y = self.scanner_list[1].get_drop_zone_position()
+
+                    if not self.would_collide_with(blue_crane) and self.can_move_to_x(target_x, blue_crane):
+                        # Now safe to proceed to right scanner
+                        self.target_i = 1
+                        self.from_rightmost = True
+                        self.state = "MOVE_TO_SCANNER"
+                        self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                        return
+                    else:
+                        # Still blocked - try going home instead
+                        if not self.would_collide_with(blue_crane):
+                            self.state = "RETURN_HOME"
+                            self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                            return
+                else:
+                    # No right scanner
+                    self.state = "RETURN_HOME"
+                    self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                    return
+
+                # Still blocked - wait here (will retry next frame)
+                return
+
             if self.drop_phase == "LOWER":
                 prog = 1.0 - (self.action_timer / self.lower_time)
                 z = self.rail_y - (self.rail_y - self.top_y) * prog
@@ -1216,10 +1601,18 @@ class RedCrane(Crane):
                     # Now go to right scanner (scanner 1)
                     if len(self.scanner_list) > 1:
                         target_x, target_y = self.scanner_list[1].get_drop_zone_position()
-                        self.target_i = 1
-                        self.from_rightmost = True
-                        self.state = "MOVE_TO_SCANNER"
-                        self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+
+                        # STRICT CHECK: Verify path to right scanner is clear
+                        if not self.would_collide_with(blue_crane) and self.can_move_to_x(target_x, blue_crane):
+                            # Safe to proceed to right scanner
+                            self.target_i = 1
+                            self.from_rightmost = True
+                            self.state = "MOVE_TO_SCANNER"
+                            self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                        else:
+                            # Blue crane blocking - go home instead
+                            self.state = "RETURN_HOME"
+                            self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                     else:
                         # No right scanner, return home
                         self.state = "RETURN_HOME"
@@ -1231,8 +1624,8 @@ class RedCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
-            # Check for collision with blue crane
-            if self.would_collide_with(blue_crane):
+            # Check for collision with blue crane - use priority system
+            if self.should_yield_to(blue_crane):
                 # Blocked by blue crane - reset movement tracking and recalculate time
                 if hasattr(self, '_move_start_x'):
                     del self._move_start_x
@@ -1280,6 +1673,42 @@ class RedCrane(Crane):
                 self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
+            # SPECIAL CASE: If we're here with no timer and no phase, we finished dropping
+            # but couldn't move because blue crane was blocking. Retry the transition.
+            if self.action_timer <= 0 and self.drop_phase is None:
+                # After dropping, check what to do next
+                if self.from_rightmost:
+                    # Check if left scanner has a diamond ready
+                    if len(self.scanner_list) > 0:
+                        left_scanner = self.scanner_list[0]
+                        if left_scanner.state in ("ready", "scanning"):
+                            target_x, target_y = left_scanner.get_drop_zone_position()
+
+                            if not self.would_collide_with(blue_crane) and self.can_move_to_x(target_x, blue_crane):
+                                # Now safe to go to left scanner
+                                self.target_i = 0
+                                self.target_box = left_scanner.get_target_box()
+                                self.from_rightmost = False
+                                self.state = "MOVE_TO_SCANNER"
+                                self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                                return
+
+                    # Left scanner not ready or still blocked - try going home
+                    self.from_rightmost = False
+                    if not self.would_collide_with(blue_crane):
+                        self.state = "RETURN_HOME"
+                        self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                        return
+                else:
+                    # Try to return home
+                    if not self.would_collide_with(blue_crane):
+                        self.state = "RETURN_HOME"
+                        self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                        return
+
+                # Still blocked - wait here (will retry next frame)
+                return
+
             if self.drop_phase == "LOWER":
                 prog = 1.0 - (self.action_timer / self.lower_time)
                 z = self.rail_y - (self.rail_y - self.top_y) * prog
@@ -1312,26 +1741,44 @@ class RedCrane(Crane):
 
                             # Go to left scanner if it's ready or scanning
                             if left_scanner.state in ("ready", "scanning"):
-                                # Go to left scanner
+                                # STRICT CHECK: Verify path is clear before committing
                                 target_x, target_y = left_scanner.get_drop_zone_position()
-                                self.target_i = 0
-                                self.target_box = left_scanner.get_target_box()
-                                self.from_rightmost = False  # Reset flag
-                                self.state = "MOVE_TO_SCANNER"
-                                self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
-                                return
 
-                        # If left scanner not ready, reset flag and go home
+                                if not self.would_collide_with(blue_crane) and self.can_move_to_x(target_x, blue_crane):
+                                    # Safe to go to left scanner
+                                    self.target_i = 0
+                                    self.target_box = left_scanner.get_target_box()
+                                    self.from_rightmost = False  # Reset flag
+                                    self.state = "MOVE_TO_SCANNER"
+                                    self.action_timer = self.travel_time_2d(self.x, self.y, target_x, target_y)
+                                    return
+
+                        # If left scanner not ready or path blocked, reset flag and go home
                         self.from_rightmost = False
-                        self.state = "RETURN_HOME"
-                        self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+
+                        # STRICT CHECK: Only go home if path is clear
+                        if not self.would_collide_with(blue_crane):
+                            self.state = "RETURN_HOME"
+                            self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                        # else: stay here until path clears
                     else:
                         # Default: return home
-                        self.state = "RETURN_HOME"
-                        self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                        # STRICT CHECK: Only go home if path is clear
+                        if not self.would_collide_with(blue_crane):
+                            self.state = "RETURN_HOME"
+                            self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
+                        # else: stay here until path clears
 
         elif self.state == "RETURN_HOME":
-            if self.would_collide_with(blue_crane):
+            if self.should_yield_to(blue_crane):
+                # CRITICAL FIX: Reset movement tracking and recalculate time
+                if hasattr(self, '_move_start_x'):
+                    del self._move_start_x
+                    del self._move_start_y
+                    del self._move_total_time
+
+                # Recalculate travel time from current position
+                self.action_timer = self.travel_time_2d(self.x, self.y, self.initial_x, self.initial_y)
                 return
 
             if self.action_timer > 0:

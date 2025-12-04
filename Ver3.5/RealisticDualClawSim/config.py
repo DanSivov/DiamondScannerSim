@@ -1,11 +1,18 @@
-# Ver3/RealisticTwoClawSim/config.py
+# Ver3.5/RealisticDualClawSim/config.py
 """
-Configuration for Ver3 Realistic Two-Claw Diamond Sorting Simulation
+Configuration for Ver3.5 Realistic Dual-Claw Diamond Sorting Simulation
 
 This config contains:
 1. Real-world measurements and positions (in mm)
 2. Movement dynamics (speeds, accelerations, timing)
 3. Scanner and box configurations
+4. Moving plate configuration
+
+KEY DIFFERENCES FROM VER3:
+- Single crane with dual lowering mechanisms (blue left, red right)
+- Crane moves only on X-axis at scanner level
+- Moving plate moves on Y-axis to position pickup/deposit points
+- No collision detection needed (single crane)
 """
 
 import math
@@ -85,41 +92,40 @@ def display_to_mm(display_units):
 
 FPS = 60
 DT = 1.0 / FPS
-SIM_SPEED_MULTIPLIER = 1.0
+SIM_SPEED_MULTIPLIER = 2.0
 
 # ============================================================================
 # MOVEMENT DYNAMICS (in mm/s and mm/s²)
 # ============================================================================
 
-# X-axis movement (horizontal along rail)
-VMAX_CLAW_X = 333.0  # mm/s (33.3 cm/s from Ver2)
-A_CLAW_X = 1500.0    # mm/s² (150 cm/s² from Ver2)
+# X-axis movement (horizontal along rail) - CRANE ONLY
+VMAX_CRANE_X = 333.0  # mm/s (33.3 cm/s from Ver3)
+A_CRANE_X = 1500.0    # mm/s² (150 cm/s² from Ver3)
 
-# Y-axis movement (horizontal perpendicular to rail)
-VMAX_CLAW_Y = 333.0  # mm/s (same as X)
-A_CLAW_Y = 1500.0    # mm/s² (same as X)
+# Y-axis movement (horizontal perpendicular to rail) - MOVING PLATE ONLY
+VMAX_PLATE_Y = 333.0  # mm/s (same as X)
+A_PLATE_Y = 1500.0    # mm/s² (same as X)
 
-# Z-axis movement (vertical lowering/raising)
-VMAX_CLAW_Z = 100.0   # mm/s (5.0 cm/s from Ver2)
-A_CLAW_Z = 300.0     # mm/s² (30 cm/s² from Ver2)
-D_Z = distance_with_time_mm(0, VMAX_CLAW_Z, A_CLAW_Z, 1.8)           # mm (8.6 cm from Ver2) - distance from rail to pickup/drop point
+# Z-axis movement (vertical lowering/raising) - BOTH CLAWS INDEPENDENTLY
+VMAX_CLAW_Z = 100.0   # mm/s (5.0 cm/s from Ver3)
+A_CLAW_Z = 300.0     # mm/s² (30 cm/s² from Ver3)
+D_Z = distance_with_time_mm(0, VMAX_CLAW_Z, A_CLAW_Z, 1.8)  # mm - distance from rail to pickup/drop point
 
 # Calculate vertical movement time
-T_Z = timeToTravel(D_Z, 0, VMAX_CLAW_Z, A_CLAW_Z)
-
-# Safety distances
-D_CLAW_SAFE_DISTANCE = 80.0  # mm minimum distance between cranes on shared rail
+T_Z = 0.3 #timeToTravel(D_Z, 0, VMAX_CLAW_Z, A_CLAW_Z)
 
 # ============================================================================
 # SCANNER CONFIGURATION
 # ============================================================================
 
-T_SCAN = 10.0  # seconds - time to scan a diamond
+T_SCAN = 17.0  # seconds - time to scan a diamond
 S_W_SCANNER = 80.0  # mm - scanner width
 S_H_SCANNER = 150.0  # mm - scanner height
 
-# Scanner positions (symmetric around center)
-SCANNER_Y = 60.0  # mm - Y position of scanners
+# CRANE AND SCANNER CONFIGURATION
+# Scanners are STATIONARY at rail level (same Y as crane)
+CRANE_Y = 200.0  # mm - crane moves at this fixed Y level
+SCANNER_Y = CRANE_Y  # mm - scanners are stationary at rail level (same as crane)
 SCANNER_SPACING = 356.0  # mm - distance between scanner centers
 SCANNER_1_X = -178.0  # mm - left scanner X position
 SCANNER_2_X = 178.0   # mm - right scanner X position
@@ -147,29 +153,48 @@ BOX_SPACING_Y = (BOX_END_Y - BOX_START_Y) / (BOX_ROWS - 1)
 BOX_RADIUS = 15.0  # mm - visual radius for display
 
 # ============================================================================
-# RAIL AND CRANE POSITIONS
+# MOVING PLATE CONFIGURATION
 # ============================================================================
 
-RAIL_Y = 200.0  # mm - Y position of the rail
-RAIL_X_MIN = -400.0  # mm - left extent of rail (EXTENDED)
-RAIL_X_MAX = 400.0   # mm - right extent of rail (EXTENDED)
+# Moving plate holds the pickup/deposit points for both scanners
+# Plate moves on Y-axis to align with:
+# 1. Pickup zone (Y=0) to load new diamonds
+# 2. Scanner level (Y=SCANNER_Y) for crane to access
+# 3. Box level (various Y positions) for depositing
 
-# Crane home positions (far apart to avoid blocking scanners)
-BLUE_CRANE_HOME_X = -320.0  # mm - blue crane waits far left
-BLUE_CRANE_HOME_Y = SCANNER_Y  # mm - at scanner level
-RED_CRANE_HOME_X = 320.0   # mm - red crane waits far right
-RED_CRANE_HOME_Y = SCANNER_Y  # mm - at scanner level
+# Plate positions - plate moves to bring targets to CRANE_Y level
+# When picking from START: plate at CRANE_Y brings START (at Y=0 relative to plate) to crane level
+PLATE_Y_HOME = CRANE_Y  # mm - home position (brings START to crane level)
+PLATE_X_CENTER = 0.0  # mm - plate is centered on X-axis
 
-# Crane dimensions
-CRANE_WIDTH = 30.0   # mm
+# Plate dimensions for visualization
+PLATE_WIDTH = 400.0  # mm - width of plate
+PLATE_HEIGHT = 40.0  # mm - height of plate
+
+# ============================================================================
+# CRANE CONFIGURATION
+# ============================================================================
+
+# Single crane body moves only on X-axis at scanner/rail level (defined above)
+CRANE_HOME_X = 0.0   # mm - crane home position (centered)
+
+# Crane dimensions - WIDER to accommodate two claws
+CRANE_WIDTH = 60.0   # mm - total width (30mm per claw)
 CRANE_HEIGHT = 28.0  # mm
+
+# Individual claw positions relative to crane center
+CLAW_SPACING = 30.0  # mm - distance between claw centers
+BLUE_CLAW_OFFSET = -CLAW_SPACING / 2  # mm - left side (negative X)
+RED_CLAW_OFFSET = CLAW_SPACING / 2    # mm - right side (positive X)
+CLAW_WIDTH = 28.0  # mm - width of each claw
+CLAW_HEIGHT = 28.0  # mm
 
 # ============================================================================
 # PICKUP ZONE CONFIGURATION
 # ============================================================================
 
 PICKUP_X = 0.0      # mm - pickup zone at center X
-PICKUP_Y = 0.0      # mm - pickup zone at center Y (origin)
+PICKUP_Y = 0.0      # mm - pickup zone at origin Y
 PICKUP_RADIUS = 20.0  # mm - visual radius for display
 
 # ============================================================================
@@ -183,10 +208,11 @@ DISPLAY_HEIGHT = 10  # Display height in units
 # Colors
 COLOR_BLUE_CLAW = '#1f77b4'
 COLOR_RED_CLAW = '#d62728'
-COLOR_SCANNER = '#00CED1'  # Cyan like in the image
+COLOR_SCANNER = '#00CED1'  # Cyan
 COLOR_PICKUP = '#90EE90'   # Light green
 COLOR_END_BOX = '#FFD700'  # Gold
-COLOR_RAIL = '#2F4F4F'     # Dark gray
+COLOR_RAIL = '#2F4F4F'     # Dark gray (crane track)
+COLOR_PLATE = '#A9A9A9'    # Light gray for moving plate
 COLOR_DIAMOND = '#FFD54F'  # Yellow diamond
 
 # ============================================================================
@@ -222,22 +248,23 @@ def get_pickup_position():
     """Returns (x, y) tuple for pickup zone"""
     return (PICKUP_X, PICKUP_Y)
 
-def calculate_2d_travel_time(x0, y0, x1, y1):
+def calculate_x_travel_time(x0, x1):
     """
-    Calculate time to travel from (x0, y0) to (x1, y1)
-    Both X and Y can move simultaneously with their respective dynamics
+    Calculate time to travel horizontally from x0 to x1 (crane movement)
 
     Returns: time in seconds
     """
     dx = abs(x1 - x0)
+    return timeToTravel(dx, 0, VMAX_CRANE_X, A_CRANE_X) if dx > 0 else 0
+
+def calculate_y_travel_time(y0, y1):
+    """
+    Calculate time to travel vertically from y0 to y1 (plate movement)
+
+    Returns: time in seconds
+    """
     dy = abs(y1 - y0)
-
-    # Calculate time for each axis independently
-    time_x = timeToTravel(dx, 0, VMAX_CLAW_X, A_CLAW_X) if dx > 0 else 0
-    time_y = timeToTravel(dy, 0, VMAX_CLAW_Y, A_CLAW_Y) if dy > 0 else 0
-
-    # Since both axes can move simultaneously, total time is the maximum
-    return max(time_x, time_y)
+    return timeToTravel(dy, 0, VMAX_PLATE_Y, A_PLATE_Y) if dy > 0 else 0
 
 # ============================================================================
 # CONFIGURATION SUMMARY
@@ -246,12 +273,12 @@ def calculate_2d_travel_time(x0, y0, x1, y1):
 def print_config_summary():
     """Print a summary of the configuration"""
     print("=" * 70)
-    print("VER3 REALISTIC TWO-CLAW SIMULATION CONFIGURATION")
+    print("VER3.5 REALISTIC DUAL-CLAW SIMULATION CONFIGURATION")
     print("=" * 70)
     print("\nMOVEMENT DYNAMICS:")
-    print(f"  X-axis: Vmax={VMAX_CLAW_X} mm/s, A={A_CLAW_X} mm/s²")
-    print(f"  Y-axis: Vmax={VMAX_CLAW_Y} mm/s, A={A_CLAW_Y} mm/s²")
-    print(f"  Z-axis: Vmax={VMAX_CLAW_Z} mm/s, A={A_CLAW_Z} mm/s², Distance={D_Z} mm")
+    print(f"  Crane X-axis: Vmax={VMAX_CRANE_X} mm/s, A={A_CRANE_X} mm/s²")
+    print(f"  Plate Y-axis: Vmax={VMAX_PLATE_Y} mm/s, A={A_PLATE_Y} mm/s²")
+    print(f"  Claw Z-axis: Vmax={VMAX_CLAW_Z} mm/s, A={A_CLAW_Z} mm/s², Distance={D_Z} mm")
     print(f"  Vertical movement time: {T_Z:.3f}s")
 
     print("\nSCANNERS:")
@@ -263,13 +290,15 @@ def print_config_summary():
     print(f"  Number: {N_BOXES} ({BOX_ROWS}×{BOX_COLS} grid)")
     print(f"  Positions: {get_end_box_positions()}")
 
-    print("\nRAIL:")
-    print(f"  Y position: {RAIL_Y} mm")
-    print(f"  X extent: [{RAIL_X_MIN}, {RAIL_X_MAX}] mm")
+    print("\nMOVING PLATE:")
+    print(f"  Home Y: {PLATE_Y_HOME} mm (pickup zone)")
+    print(f"  Scanner Y: {SCANNER_Y} mm (scanner level)")
 
-    print("\nCRANE HOMES:")
-    print(f"  Blue: ({BLUE_CRANE_HOME_X}, {BLUE_CRANE_HOME_Y}) mm")
-    print(f"  Red: ({RED_CRANE_HOME_X}, {RED_CRANE_HOME_Y}) mm")
+    print("\nDUAL-CLAW CRANE:")
+    print(f"  Home: ({CRANE_HOME_X}, {CRANE_Y}) mm")
+    print(f"  Blue claw offset: {BLUE_CLAW_OFFSET} mm (left)")
+    print(f"  Red claw offset: {RED_CLAW_OFFSET} mm (right)")
+    print(f"  Moves on X-axis only")
 
     print("\nPICKUP ZONE:")
     print(f"  Position: ({PICKUP_X}, {PICKUP_Y}) mm (origin)")
